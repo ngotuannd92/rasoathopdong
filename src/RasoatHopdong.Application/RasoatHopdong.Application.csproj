@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\RasoatHopdong.Criteria\RasoatHopdong.Criteria.csproj" />
+    <ProjectReference Include="..\RasoatHopdong.Engine\RasoatHopdong.Engine.csproj" />
+    <ProjectReference Include="..\RasoatHopdong.Result\RasoatHopdong.Result.csproj" />
+    <ProjectReference Include="..\RasoatHopdong.Export\RasoatHopdong.Export.csproj" />
+    <ProjectReference Include="..\RasoatHopdong.Update\RasoatHopdong.Update.csproj" />
+    <ProjectReference Include="..\RasoatHopdong.Storage\RasoatHopdong.Storage.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

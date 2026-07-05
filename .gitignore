@@ -1,0 +1,43 @@
+# Build output
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+AnyCPU/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Test output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# .NET tooling
+project.assets.json
+*.nuget.g.props
+*.nuget.g.targets
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
