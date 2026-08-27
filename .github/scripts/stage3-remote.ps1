@@ -6,16 +6,17 @@ Push-Location $source
 try {
   Write-Output "RUNNER=$env:RUNNER_NAME MACHINE=$env:COMPUTERNAME"
   Write-Output "HEAD=$((git rev-parse HEAD).Trim()) BRANCH=$((git branch --show-current).Trim())"
-  Write-Output 'PRIVATE_REMOTE_ACCESS_BEGIN'
-  $old = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  git ls-remote https://github.com/ngotuannd92/rasoathopdong-stage10.git HEAD 2>&1 | Select-Object -First 20
-  $code = $LASTEXITCODE
-  $ErrorActionPreference = $old
-  Write-Output "PRIVATE_REMOTE_ACCESS_EXIT=$code"
-  Write-Output 'PRIVATE_REMOTE_ACCESS_END'
-  Write-Output 'MIGRATION_REFERENCES_BEGIN'
-  Get-ChildItem .\src,.\tests -Recurse -File -Include *.cs | Select-String -Pattern 'CriteriaCatalogVersion|Migration020To030|PrepareCatalog020Schema3Fixture|LocalDataUpgradeCoordinator|CriteriaCatalogMigrationMapSchemaVersion' | Select-Object -First 220 | ForEach-Object { "{0}:{1}:{2}" -f $_.Path,$_.LineNumber,$_.Line.Trim() }
-  Write-Output 'MIGRATION_REFERENCES_END'
+  Write-Output 'MIGRATION_GATE_BEGIN'
+  $paths = @(
+    '.\tests\RasoatHopDong.Tests\Stage2PostPromotionRuntimeGateTests.cs',
+    '.\tests\RasoatHopDong.Tests\Stage2MigrationFixturePreparationTests.cs'
+  )
+  foreach ($p in $paths) {
+    if (Test-Path $p) { Write-Output "FILE=$p"; Get-Content $p -TotalCount 320 }
+  }
+  Write-Output 'UPGRADE_COORDINATOR_BEGIN'
+  Get-ChildItem .\src -Recurse -File -Filter *.cs | Where-Object { $_.Name -match 'LocalDataUpgradeCoordinator|CriteriaCatalogMigration' } | ForEach-Object { Write-Output "FILE=$($_.FullName)"; Get-Content $_.FullName -TotalCount 360 }
+  Write-Output 'UPGRADE_COORDINATOR_END'
+  Write-Output 'MIGRATION_GATE_END'
 }
 finally { Pop-Location }
