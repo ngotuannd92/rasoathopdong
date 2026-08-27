@@ -1,0 +1,31 @@
+name: Stage3 Connectivity Probe
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/stage3-connectivity-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Probe
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          Write-Output "COMPUTERNAME=$env:COMPUTERNAME"
+          Write-Output "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          Write-Output "RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Output "RUNNER_OS=$env:RUNNER_OS"
+          Write-Output "RUNNER_ARCH=$env:RUNNER_ARCH"
+          Write-Output "DOTNET=$(& dotnet --version)"
