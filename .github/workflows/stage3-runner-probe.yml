@@ -1,4 +1,4 @@
-name: Stage3 Runner Probe
+name: Stage3 Bootstrap
 
 on:
   push:
@@ -12,19 +12,88 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  bootstrap:
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         shell: powershell
     steps:
-      - uses: actions/checkout@v4
-      - name: Probe
+      - name: Locate current Stage3 source
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          Write-Output "COMPUTERNAME=$env:COMPUTERNAME"
-          Write-Output "ARCH=$env:PROCESSOR_ARCHITECTURE"
-          Write-Output "DOTNET=$(& dotnet --version)"
-          Write-Output "PWD=$PWD"
+
+          $workRoot = 'C:\Stage3-Work'
+          $workSource = Join-Path $workRoot 'source-current'
+          New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
+
+          $roots = @(
+            (Join-Path $env:USERPROFILE 'Desktop'),
+            (Join-Path $env:USERPROFILE 'Documents'),
+            (Join-Path $env:USERPROFILE 'Downloads'),
+            'C:\Stage3',
+            'C:\Stage3-Work',
+            'C:\work',
+            'C:\src',
+            'C:\actions-runner\_work'
+          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
+
+          function Is-TargetVersion([string]$versionFile) {
+            try {
+              $text = [IO.File]::ReadAllText($versionFile)
+              return $text.Contains('<AppVersion>0.4.0</AppVersion>') -and
+                     $text.Contains('<EngineVersion>0.3.1</EngineVersion>') -and
+                     $text.Contains('<CriteriaCatalogVersion>0.3.0</CriteriaCatalogVersion>') -and
+                     $text.Contains('<DatabaseSchemaVersion>3</DatabaseSchemaVersion>') -and
+                     $text.Contains('<CriteriaSnapshotSchemaVersion>4</CriteriaSnapshotSchemaVersion>') -and
+                     $text.Contains('<CriteriaCatalogMigrationMapSchemaVersion>3</CriteriaCatalogMigrationMapSchemaVersion>')
+            } catch { return $false }
+          }
+
+          $sourceRoot = $null
+          foreach ($root in $roots) {
+            $files = Get-ChildItem -Path $root -Filter Version.props -File -Recurse -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+              if ($file.FullName -like "$workSource*") { continue }
+              if ($file.Directory.Name -ne 'eng') { continue }
+              if (Is-TargetVersion $file.FullName) {
+                $sourceRoot = Split-Path $file.Directory.FullName -Parent
+                break
+              }
+            }
+            if ($sourceRoot) { break }
+          }
+
+          if (-not $sourceRoot) {
+            $zip = $null
+            foreach ($root in $roots) {
+              $zip = Get-ChildItem -Path $root -Filter 'rasoathopdong-v0.4.0-stage2-complete-final*.zip' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($zip) { break }
+            }
+            if ($zip) {
+              $extractRoot = Join-Path $workRoot 'incoming-extracted'
+              if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }
+              New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+              Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extractRoot -Force
+              $candidate = Get-ChildItem -Path $extractRoot -Filter Version.props -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Directory.Name -eq 'eng' -and (Is-TargetVersion $_.FullName) } |
+                Select-Object -First 1
+              if ($candidate) { $sourceRoot = Split-Path $candidate.Directory.FullName -Parent }
+            }
+          }
+
+          if (-not $sourceRoot) {
+            Write-Output 'STAGE3_SOURCE_READY=no'
+            throw 'Current v0.4.0 / engine 0.3.1 source was not found on Stage3-Win11.'
+          }
+
+          if (Test-Path $workSource) { Remove-Item $workSource -Recurse -Force }
+          New-Item -ItemType Directory -Path $workSource -Force | Out-Null
+          Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $workSource -Recurse -Force
+
+          $vf = Join-Path $workSource 'eng\Version.props'
+          if (-not (Is-TargetVersion $vf)) { throw 'Copied Stage3 source version contract does not match expected current source.' }
+          Write-Output 'STAGE3_SOURCE_READY=yes'
+          Write-Output "WORK_SOURCE=$workSource"
+          Write-Output 'APP=0.4.0 ENGINE=0.3.1 CATALOG=0.3.0 DB=3 SNAPSHOT=4 MIGRATION_MAP=3'
