@@ -1,0 +1,26 @@
+name: Stage3 Remote Command
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/stage3-remote-command.yml
+      - .github/scripts/stage3-remote.ps1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Checkout control repo
+        uses: actions/checkout@v4
+      - name: Execute Stage3 remote script
+        run: .\.github\scripts\stage3-remote.ps1
