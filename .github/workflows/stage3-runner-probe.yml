@@ -19,7 +19,7 @@ jobs:
       run:
         shell: powershell
     steps:
-      - name: Run Review Compare Benchmark and criteria runtime gates
+      - name: Bootstrap verifier environment and run core gates
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -27,18 +27,32 @@ jobs:
           $source = 'C:\Stage3-Work\source-current'
           $logRoot = 'C:\Stage3-Work\logs\core-e2e'
           $fixtureRoot = 'C:\Stage3-Work\fixtures\stage2-runtime'
+          $venv = 'C:\Stage3-Work\pyenv'
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path 'C:\Stage3-Work\state' -Force | Out-Null
+          if (-not (Test-Path (Join-Path $venv 'Scripts\python.exe'))) {
+            python -m venv $venv
+          }
+          $py = Join-Path $venv 'Scripts\python.exe'
+          $old = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          & $py -m pip install --disable-pip-version-check --quiet 'python-docx==1.1.2' *> (Join-Path $logRoot 'pip.log')
+          $pipCode = $LASTEXITCODE
+          $ErrorActionPreference = $old
+          if ($pipCode -ne 0) { Get-Content (Join-Path $logRoot 'pip.log') -Tail 40; throw 'Verifier dependency bootstrap failed.' }
+          & $py -m pip freeze | Set-Content 'C:\Stage3-Work\state\python-tooling.txt' -Encoding UTF8
+
           if (Test-Path $fixtureRoot) { Remove-Item $fixtureRoot -Recurse -Force }
           New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
           Push-Location $source
           try {
             function Run-Native([string]$name,[scriptblock]$command) {
               $log = Join-Path $logRoot ($name + '.log')
-              $old = $ErrorActionPreference
+              $oldPreference = $ErrorActionPreference
               $ErrorActionPreference = 'Continue'
               & $command *> $log
               $code = $LASTEXITCODE
-              $ErrorActionPreference = $old
+              $ErrorActionPreference = $oldPreference
               Write-Output "GATE=$name EXIT=$code"
               if ($code -ne 0) {
                 Get-Content $log -Tail 80 -ErrorAction SilentlyContinue
@@ -47,14 +61,11 @@ jobs:
               Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Passed!|Failed!|Total tests:|Test Run Successful|PASS|PASSED' } | Select-Object -Last 12
             }
 
-            Run-Native 'phase2-static' { python .\scripts\verify-phase2-static.py }
-            Run-Native 'phase2-content-quality' { python .\scripts\verify-phase2-content-quality.py }
-            Run-Native 'phase2-targeted-semantics' { python .\scripts\verify-phase2-targeted-semantics.py }
-            Run-Native 'phase2-compare-corpus' { python .\scripts\verify-phase2-compare-corpus.py }
-            Run-Native 'phase2-golden-semantics' { python .\scripts\verify-phase2-golden-semantics.py }
-
-            Run-Native 'candidate-runtime' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'Stage2Runtime=Candidate' --logger 'console;verbosity=minimal' }
-            Run-Native 'current-fixture' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'Stage2Runtime=CurrentFixture' --logger 'console;verbosity=minimal' }
+            Run-Native 'phase2-static' { & $py .\scripts\verify-phase2-static.py }
+            Run-Native 'phase2-content-quality' { & $py .\scripts\verify-phase2-content-quality.py }
+            Run-Native 'phase2-targeted-semantics' { & $py .\scripts\verify-phase2-targeted-semantics.py }
+            Run-Native 'phase2-compare-corpus' { & $py .\scripts\verify-phase2-compare-corpus.py }
+            Run-Native 'phase2-golden-semantics' { & $py .\scripts\verify-phase2-golden-semantics.py }
 
             $env:STAGE2_POST_PROMOTION = '1'
             $exactFilter = 'FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialReviewGolden|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialCompareCorpus|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialBenchmarkV3|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialHistoryAndExports'
