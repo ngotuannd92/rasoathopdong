@@ -6,7 +6,7 @@ $expectedCatalog = '2faf9f56016e83101d6552deb15447e99e15aa00f1c6a5bf703df2b309ba
 $expectedManifest = 'dd253d8613e41a4837fd4ba45f1aa5678820be9ff850a4269d20a9c360ea1283'
 $expectedMigration = 'e06aa01e327841b6025141938dedd12348257b1ad6f62ea088645d0fa8788810'
 $expectedTarget = '47af07851637f14da1ce615864cab213e26233eae32177a52a47e3b1f22ab364'
-$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r2'
+$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r3'
 if (Test-Path -LiteralPath $logRoot) { throw "Log root already exists: $logRoot" }
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
@@ -19,8 +19,13 @@ try {
   $trackedPycache = @(git ls-files 'scripts/__pycache__/*')
   $untrackedPycache = @(git ls-files --others --exclude-standard 'scripts/__pycache__/*')
   Write-Output "TRACKED_PYCACHE=$($trackedPycache.Count) UNTRACKED_PYCACHE=$($untrackedPycache.Count)"
-  if ($trackedPycache.Count -eq 0 -and $untrackedPycache.Count -gt 0 -and (Test-Path -LiteralPath '.\scripts\__pycache__')) {
-    Remove-Item -LiteralPath '.\scripts\__pycache__' -Recurse -Force
+  $trackedPycache | ForEach-Object { Write-Output "TRACKED_PYCACHE_PATH=$_" }
+  foreach ($relative in $untrackedPycache) {
+    $normalized = $relative.Replace('/','\')
+    $full = Join-Path $source $normalized
+    if (-not $full.StartsWith((Join-Path $source 'scripts\__pycache__'), [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing generated-cache cleanup outside pycache: $full" }
+    if (Test-Path -LiteralPath $full -PathType Leaf) { Remove-Item -LiteralPath $full -Force }
+    Write-Output "REMOVED_UNTRACKED_PYCACHE=$relative"
   }
   Write-Output 'WORKTREE_STATUS_BEGIN'
   git status --short
