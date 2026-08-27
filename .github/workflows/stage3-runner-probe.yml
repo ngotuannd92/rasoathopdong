@@ -1,4 +1,4 @@
-name: Stage3 Fix Test Isolation
+name: Stage3 Verify Test Isolation
 
 on:
   push:
@@ -12,14 +12,14 @@ permissions:
   contents: read
 
 jobs:
-  fix-test-isolation:
+  verify-test-isolation:
     runs-on: self-hosted
     timeout-minutes: 40
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Isolate Windows temp fixtures and run targeted regression
+      - name: Verify and commit Windows temp fixture isolation
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -29,57 +29,17 @@ jobs:
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
           Push-Location $source
           try {
-            function Edit-File([string]$path, [scriptblock]$edit) {
-              $text = [IO.File]::ReadAllText($path)
-              $updated = & $edit $text
-              if ($updated -eq $text) { throw "No edit applied to $path" }
-              [IO.File]::WriteAllText($path, $updated, [Text.UTF8Encoding]::new($false))
-            }
-            function Replace-Required([string]$text,[string]$old,[string]$new,[int]$count) {
-              $found = ([regex]::Matches($text,[regex]::Escape($old))).Count
-              if ($found -ne $count) { throw "Expected $count occurrence(s), found $found." }
-              return $text.Replace($old,$new)
-            }
-            $tempHelper = @(
-              '    private static string GetTestTempPath()',
-              '    {',
-              '        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");',
-              '        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;',
-              '    }',
-              ''
-            ) -join "`n"
-
             $publishRelative = 'tests\RasoatHopDong.Tests\Stage7PublishContractTests.cs'
-            $publish = Join-Path $source $publishRelative
-            if ([IO.File]::ReadAllText($publish).Contains('private static string GetTestTempPath()')) {
-              Write-Output 'PUBLISH_FIX=already-applied'
-            } else {
-              Edit-File $publish {
-                param($text)
-                $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 2
-                return Replace-Required $text '    private static string CreateTempRoot()' ($tempHelper + "`n    private static string CreateTempRoot()") 1
-              }
-              Write-Output 'PUBLISH_FIX=applied'
-            }
-
             $installerRelative = 'tests\RasoatHopDong.Tests\Stage7InstallerContractTests.cs'
+            $publish = Join-Path $source $publishRelative
             $installer = Join-Path $source $installerRelative
-            if ([IO.File]::ReadAllText($installer).Contains('private static string GetTestTempPath()')) {
-              Write-Output 'INSTALLER_FIX=already-applied'
-            } else {
-              Edit-File $installer {
-                param($text)
-                $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 6
-                return Replace-Required $text '    private static void DeleteTempRoot(string root)' ($tempHelper + "`n    private static void DeleteTempRoot(string root)") 1
-              }
-              Write-Output 'INSTALLER_FIX=applied'
-            }
-
-            git diff --check *> (Join-Path $logRoot 'test-isolation-diff-check.log')
-            if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
+            if (-not [IO.File]::ReadAllText($publish).Contains('private static string GetTestTempPath()')) { throw 'Publish test isolation fix is missing.' }
+            if (-not [IO.File]::ReadAllText($installer).Contains('private static string GetTestTempPath()')) { throw 'Installer test isolation fix is missing.' }
 
             $oldPreference = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
+            & git diff --check *> (Join-Path $logRoot 'test-isolation-diff-check.log')
+            $diffCode = $LASTEXITCODE
             & dotnet build .\rasoathopdong.sln -c Debug --no-restore --nologo *> (Join-Path $logRoot 'test-isolation-build.log')
             $buildCode = $LASTEXITCODE
             if ($buildCode -eq 0) {
@@ -88,16 +48,21 @@ jobs:
             } else { $testCode = 999 }
             $ErrorActionPreference = $oldPreference
 
-            Write-Output "BUILD_EXIT=$buildCode TEST_EXIT=$testCode"
-            if ($testCode -eq 0) {
-              git add -- $publishRelative $installerRelative *> $null
-              git commit -m 'test(stage3): isolate Windows runner temp fixtures' *> (Join-Path $logRoot 'test-isolation-commit.log')
-              if ($LASTEXITCODE -ne 0) { throw 'Local test-isolation commit failed.' }
-              Write-Output "LOCAL_COMMIT=$((git rev-parse HEAD).Trim())"
-              Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') | Where-Object { $_ -match 'Passed!|Failed!|Total tests|Test Run Successful|Test Run Failed' } | Select-Object -Last 8
-            } else {
-              Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') -Tail 60 -ErrorAction SilentlyContinue
-              throw 'Targeted Stage7 regression failed after test-isolation fix.'
-            }
+            Write-Output "DIFF_EXIT=$diffCode BUILD_EXIT=$buildCode TEST_EXIT=$testCode"
+            if ($diffCode -ne 0) { throw 'git diff --check failed.' }
+            if ($buildCode -ne 0) { Get-Content (Join-Path $logRoot 'test-isolation-build.log') -Tail 50; throw 'Debug build failed.' }
+            if ($testCode -ne 0) { Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') -Tail 80; throw 'Targeted Stage7 regression failed.' }
+
+            $ErrorActionPreference = 'Continue'
+            & git add -- $publishRelative $installerRelative *> (Join-Path $logRoot 'test-isolation-git-add.log')
+            $addCode = $LASTEXITCODE
+            if ($addCode -eq 0) {
+              & git commit -m 'test(stage3): isolate Windows runner temp fixtures' *> (Join-Path $logRoot 'test-isolation-commit.log')
+              $commitCode = $LASTEXITCODE
+            } else { $commitCode = 999 }
+            $ErrorActionPreference = $oldPreference
+            if ($addCode -ne 0 -or $commitCode -ne 0) { throw 'Local commit of test isolation fix failed.' }
+            Write-Output "LOCAL_COMMIT=$((git rev-parse HEAD).Trim())"
+            Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') | Where-Object { $_ -match 'Passed!|Failed!|Total tests|Test Run Successful|Test Run Failed' } | Select-Object -Last 8
           }
           finally { Pop-Location }
