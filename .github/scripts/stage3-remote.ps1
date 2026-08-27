@@ -1,66 +1,86 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $source = 'C:\Stage3-Work\source-current'
-$hashA = '47af07851637f14da1ce615864cab213e26233eae32177a52a47e3b1f22ab364'
-$hashB = '2faf9f56016e83101d6552deb15447e99e15aa00f1c6a5bf703df2b309baa3c1'
-$phase1Candidate = 'D:\rasoathopdong-v0.4.0-phase1-final-closed-r13.zip'
-$expectedPhase1Hash = '9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b'
+$baselineTag = 'stage3-baseline-v0.4.0'
+$expectedCatalog = '2faf9f56016e83101d6552deb15447e99e15aa00f1c6a5bf703df2b309baa3c1'
+$expectedManifest = 'dd253d8613e41a4837fd4ba45f1aa5678820be9ff850a4269d20a9c360ea1283'
+$expectedMigration = 'e06aa01e327841b6025141938dedd12348257b1ad6f62ea088645d0fa8788810'
+$expectedTarget = '47af07851637f14da1ce615864cab213e26233eae32177a52a47e3b1f22ab364'
+$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r1'
+if (Test-Path -LiteralPath $logRoot) { throw "Log root already exists: $logRoot" }
+New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
 Push-Location $source
 try {
-  Write-Output "SOURCE_HEAD=$((git rev-parse HEAD).Trim()) BASELINE=$((git rev-parse stage3-baseline-v0.4.0).Trim())"
-  Write-Output 'HASH_REFERENCES_BEGIN'
-  Get-ChildItem .\docs,.\evidence,.\.baseline -Recurse -File -Include *.json,*.md,*.txt -ErrorAction SilentlyContinue |
-    ForEach-Object {
-      $hits = Select-String -LiteralPath $_.FullName -Pattern $hashA,$hashB -SimpleMatch -ErrorAction SilentlyContinue
-      foreach ($hit in $hits) { Write-Output "HIT=$($hit.Path):$($hit.LineNumber):$($hit.Line.Trim())" }
-    }
-  Write-Output 'HASH_REFERENCES_END'
-
-  Write-Output 'PHASE2_ACCEPTANCE_HASH_FIELDS_BEGIN'
-  foreach ($file in @(
-    '.\docs\criteria-rebuild-phase2\phase2-final-acceptance.json',
-    '.\docs\criteria-rebuild-phase2\phase2-runtime-gate-evidence.json',
-    '.\docs\criteria-rebuild-phase2\phase2-current-static-acceptance.json',
-    '.\docs\criteria-rebuild-phase2\phase2-before-lock.json')) {
-    if (Test-Path -LiteralPath $file) {
-      Write-Output "FILE=$file"
-      Get-Content -LiteralPath $file | Select-String -Pattern 'sha','hash','catalog','manifest','migration','175','45','0.3.0' | ForEach-Object { Write-Output $_.Line.Trim() }
-    }
-  }
-  Write-Output 'PHASE2_ACCEPTANCE_HASH_FIELDS_END'
-
-  Write-Output 'CATALOG_FILE_HASHES_BEGIN'
-  foreach ($file in @(
-    '.\data\criteria-catalog\official-criteria-catalog.json',
-    '.\data\criteria-catalog\official-criteria-catalog-manifest.json',
-    '.\data\criteria-catalog\criteria-catalog-migration-map.json',
-    '.\docs\criteria-rebuild-phase2\official-candidate\official-criteria-catalog.json',
-    '.\docs\criteria-rebuild-phase2\official-candidate\official-criteria-catalog-manifest.json',
-    '.\docs\criteria-rebuild-phase2\official-candidate\criteria-catalog-migration-map.json',
-    '.\docs\criteria-rebuild-phase2\target-criteria-map.json')) {
-    if (Test-Path -LiteralPath $file -PathType Leaf) {
-      Write-Output "FILE_HASH=$file SHA256=$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()) SIZE=$((Get-Item -LiteralPath $file).Length)"
-    }
-  }
-  Write-Output 'CATALOG_FILE_HASHES_END'
-
-  if (Test-Path -LiteralPath $phase1Candidate -PathType Leaf) {
-    $h = (Get-FileHash -LiteralPath $phase1Candidate -Algorithm SHA256).Hash.ToLowerInvariant()
-    Write-Output "PHASE1_ARCHIVE=$phase1Candidate SIZE=$((Get-Item -LiteralPath $phase1Candidate).Length) SHA256=$h EXPECTED=$expectedPhase1Hash MATCH=$([bool]($h -ceq $expectedPhase1Hash))"
-  } else { Write-Output 'PHASE1_ARCHIVE=NOT_FOUND' }
-
-  Write-Output 'PYCACHE_BEGIN'
-  $trackedPycache = @(git ls-files 'scripts/__pycache__/*')
-  $untrackedPycache = @(git ls-files --others --exclude-standard 'scripts/__pycache__/*')
-  Write-Output "TRACKED_PYCACHE=$($trackedPycache.Count) UNTRACKED_PYCACHE=$($untrackedPycache.Count)"
-  $untrackedPycache | ForEach-Object { Write-Output "UNTRACKED=$_" }
-  if ($trackedPycache.Count -eq 0 -and $untrackedPycache.Count -gt 0) {
-    Remove-Item -LiteralPath '.\scripts\__pycache__' -Recurse -Force
-  }
-  Write-Output 'STATUS_AFTER_CLEANUP_BEGIN'
+  $head = (git rev-parse HEAD).Trim()
+  $base = (git rev-parse $baselineTag).Trim()
+  Write-Output "SOURCE_HEAD=$head BASELINE=$base BRANCH=$((git branch --show-current).Trim())"
+  Write-Output 'WORKTREE_STATUS_BEGIN'
   git status --short
-  Write-Output 'STATUS_AFTER_CLEANUP_END'
-  Write-Output 'PYCACHE_END'
+  Write-Output 'WORKTREE_STATUS_END'
+  git diff --check
+  if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
+
+  $files = @(
+    'tests/RasoatHopDong.Tests/Stage2MigrationFixturePreparationTests.cs',
+    'tests/RasoatHopDong.Tests/Stage7InstallerContractTests.cs'
+  )
+  Write-Output 'TEST_PATCH_DIFF_BEGIN'
+  git diff --no-ext-diff --unified=80 "$baselineTag..HEAD" -- $files
+  if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Stage3 test patch.' }
+  Write-Output 'TEST_PATCH_DIFF_END'
+
+  $allChanged = @(git diff --name-only "$baselineTag..HEAD")
+  $allowed = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  foreach ($file in $files) { [void]$allowed.Add($file) }
+  $unexpected = @($allChanged | Where-Object { -not $allowed.Contains($_.Replace('\','/')) })
+  Write-Output "CHANGED_FILES=$($allChanged.Count) UNEXPECTED_CHANGED_FILES=$($unexpected.Count)"
+  $allChanged | ForEach-Object { Write-Output "CHANGED=$_" }
+  $unexpected | ForEach-Object { Write-Output "UNEXPECTED=$_" }
+  if ($unexpected.Count -ne 0) { throw 'Unexpected tracked changes exist relative to Stage3 baseline.' }
+
+  git diff --quiet $baselineTag -- src data eng scripts installer tools
+  $productionDiff = $LASTEXITCODE
+  git diff --quiet $baselineTag -- src/RasoatHopDong.App/Web
+  $webDiff = $LASTEXITCODE
+  Write-Output "PRODUCTION_TREE_DIFF_EXIT=$productionDiff WEB_UI_DIFF_EXIT=$webDiff"
+  if ($productionDiff -ne 0 -or $webDiff -ne 0) { throw 'Production or frozen Web UI changed relative to Stage3 baseline.' }
+
+  function Assert-Hash([string]$path,[string]$expected,[string]$label) {
+    $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Output "$label`_SHA256=$actual EXPECTED=$expected MATCH=$([bool]($actual -ceq $expected))"
+    if ($actual -cne $expected) { throw "$label hash mismatch." }
+  }
+  Assert-Hash '.\data\criteria-catalog\official-criteria-catalog.json' $expectedCatalog 'CATALOG'
+  Assert-Hash '.\data\criteria-catalog\official-criteria-catalog-manifest.json' $expectedManifest 'MANIFEST'
+  Assert-Hash '.\data\criteria-catalog\criteria-catalog-migration-map.json' $expectedMigration 'MIGRATION_MAP'
+  Assert-Hash '.\docs\criteria-rebuild-phase2\target-criteria-map.json' $expectedTarget 'TARGET_MAP'
+
+  foreach ($pair in @(
+    @('.\data\criteria-catalog\official-criteria-catalog.json','.\docs\criteria-rebuild-phase2\official-candidate\official-criteria-catalog.json','CATALOG_CANDIDATE'),
+    @('.\data\criteria-catalog\official-criteria-catalog-manifest.json','.\docs\criteria-rebuild-phase2\official-candidate\official-criteria-catalog-manifest.json','MANIFEST_CANDIDATE'),
+    @('.\data\criteria-catalog\criteria-catalog-migration-map.json','.\docs\criteria-rebuild-phase2\official-candidate\criteria-catalog-migration-map.json','MIGRATION_CANDIDATE'))) {
+    $a = (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToLowerInvariant()
+    $b = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Output "$($pair[2])_MATCH=$([bool]($a -ceq $b)) CURRENT=$a CANDIDATE=$b"
+    if ($a -cne $b) { throw "$($pair[2]) bytes differ." }
+  }
+
+  function Run-Targeted([string]$config) {
+    $log = Join-Path $logRoot ("targeted-" + $config.ToLowerInvariant() + '.log')
+    $filter = 'FullyQualifiedName~Stage2MigrationFixturePreparationTests|FullyQualifiedName~Stage7InstallerContractTests'
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c $config --no-build --no-restore --nologo --filter $filter --logger 'console;verbosity=minimal' *> $log
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $oldPref
+    Write-Output "TARGETED_CONFIG=$config EXIT=$code"
+    Get-Content -LiteralPath $log | Where-Object { $_ -match 'Passed!|Failed!|Total tests:|Skipped:' } | Select-Object -Last 8 | ForEach-Object { Write-Output $_ }
+    if ($code -ne 0) { Get-Content -LiteralPath $log -Tail 160; throw "Targeted Stage3 patch tests failed in $config." }
+  }
+  Run-Targeted 'Debug'
+  Run-Targeted 'Release'
+
+  Write-Output 'STAGE3_TEST_PATCH_AND_CURRENT_INTEGRITY=PASS'
 }
 finally { Pop-Location }
