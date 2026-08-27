@@ -2,11 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $source = 'C:\Stage3-Work\source-current'
 $baselineTag = 'stage3-baseline-v0.4.0'
-$expectedCatalog = '2faf9f56016e83101d6552deb15447e99e15aa00f1c6a5bf703df2b309baa3c1'
-$expectedManifest = 'dd253d8613e41a4837fd4ba45f1aa5678820be9ff850a4269d20a9c360ea1283'
-$expectedMigration = 'e06aa01e327841b6025141938dedd12348257b1ad6f62ea088645d0fa8788810'
-$expectedTarget = '47af07851637f14da1ce615864cab213e26233eae32177a52a47e3b1f22ab364'
-$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r3'
+$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r4'
 if (Test-Path -LiteralPath $logRoot) { throw "Log root already exists: $logRoot" }
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
@@ -16,10 +12,7 @@ try {
   $base = (git rev-parse $baselineTag).Trim()
   Write-Output "SOURCE_HEAD=$head BASELINE=$base BRANCH=$((git branch --show-current).Trim())"
 
-  $trackedPycache = @(git ls-files 'scripts/__pycache__/*')
   $untrackedPycache = @(git ls-files --others --exclude-standard 'scripts/__pycache__/*')
-  Write-Output "TRACKED_PYCACHE=$($trackedPycache.Count) UNTRACKED_PYCACHE=$($untrackedPycache.Count)"
-  $trackedPycache | ForEach-Object { Write-Output "TRACKED_PYCACHE_PATH=$_" }
   foreach ($relative in $untrackedPycache) {
     $normalized = $relative.Replace('/','\')
     $full = Join-Path $source $normalized
@@ -27,10 +20,10 @@ try {
     if (Test-Path -LiteralPath $full -PathType Leaf) { Remove-Item -LiteralPath $full -Force }
     Write-Output "REMOVED_UNTRACKED_PYCACHE=$relative"
   }
-  Write-Output 'WORKTREE_STATUS_BEGIN'
-  git status --short
-  Write-Output 'WORKTREE_STATUS_END'
+
   $status = @(git status --porcelain)
+  Write-Output "WORKTREE_STATUS_COUNT=$($status.Count)"
+  $status | ForEach-Object { Write-Output "STATUS=$_" }
   if ($status.Count -ne 0) { throw 'Worktree contains uncommitted or untracked content after generated-cache cleanup.' }
   git diff --check
   if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
@@ -39,18 +32,12 @@ try {
     'tests/RasoatHopDong.Tests/Stage7InstallerContractTests.cs',
     'tests/RasoatHopDong.Tests/Stage7PublishContractTests.cs'
   )
-  Write-Output 'TEST_PATCH_DIFF_BEGIN'
-  git diff --no-ext-diff --unified=80 "$baselineTag..HEAD" -- $files
-  if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Stage3 test patch.' }
-  Write-Output 'TEST_PATCH_DIFF_END'
-
   $allChanged = @(git diff --name-only "$baselineTag..HEAD")
   $allowed = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
   foreach ($file in $files) { [void]$allowed.Add($file) }
   $unexpected = @($allChanged | Where-Object { -not $allowed.Contains($_.Replace('\','/')) })
   Write-Output "CHANGED_FILES=$($allChanged.Count) UNEXPECTED_CHANGED_FILES=$($unexpected.Count)"
   $allChanged | ForEach-Object { Write-Output "CHANGED=$_" }
-  $unexpected | ForEach-Object { Write-Output "UNEXPECTED=$_" }
   if ($allChanged.Count -ne 2 -or $unexpected.Count -ne 0) { throw 'Stage3 tracked diff is not exactly the two approved test fixtures.' }
 
   git diff --quiet $baselineTag -- src data eng scripts installer tools
@@ -60,15 +47,27 @@ try {
   Write-Output "PRODUCTION_TREE_DIFF_EXIT=$productionDiff WEB_UI_DIFF_EXIT=$webDiff"
   if ($productionDiff -ne 0 -or $webDiff -ne 0) { throw 'Production or frozen Web UI changed relative to Stage3 baseline.' }
 
-  function Assert-Hash([string]$path,[string]$expected,[string]$label) {
-    $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-    Write-Output "$label`_SHA256=$actual EXPECTED=$expected MATCH=$([bool]($actual -ceq $expected))"
-    if ($actual -cne $expected) { throw "$label hash mismatch." }
+  function Get-BaselineBlobHash([string]$repoPath) {
+    $temp = Join-Path $logRoot ([IO.Path]::GetRandomFileName())
+    try {
+      cmd /c "git show $baselineTag`:$repoPath > `"$temp`""
+      if ($LASTEXITCODE -ne 0) { throw "Unable to materialize baseline blob: $repoPath" }
+      return (Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
   }
-  Assert-Hash '.\data\criteria-catalog\official-criteria-catalog.json' $expectedCatalog 'CATALOG'
-  Assert-Hash '.\data\criteria-catalog\official-criteria-catalog-manifest.json' $expectedManifest 'MANIFEST'
-  Assert-Hash '.\data\criteria-catalog\criteria-catalog-migration-map.json' $expectedMigration 'MIGRATION_MAP'
-  Assert-Hash '.\docs\criteria-rebuild-phase2\target-criteria-map.json' $expectedTarget 'TARGET_MAP'
+
+  foreach ($repoPath in @(
+    'data/criteria-catalog/official-criteria-catalog.json',
+    'data/criteria-catalog/official-criteria-catalog-manifest.json',
+    'data/criteria-catalog/criteria-catalog-migration-map.json',
+    'docs/criteria-rebuild-phase2/target-criteria-map.json')) {
+    $currentPath = Join-Path $source $repoPath.Replace('/','\')
+    $currentHash = (Get-FileHash -LiteralPath $currentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $baselineHash = Get-BaselineBlobHash $repoPath
+    Write-Output "HASH_PATH=$repoPath CURRENT=$currentHash BASELINE=$baselineHash MATCH=$([bool]($currentHash -ceq $baselineHash))"
+    if ($currentHash -cne $baselineHash) { throw "Baseline hash mismatch: $repoPath" }
+  }
 
   foreach ($pair in @(
     @('.\data\criteria-catalog\official-criteria-catalog.json','.\docs\criteria-rebuild-phase2\official-candidate\official-criteria-catalog.json','CATALOG_CANDIDATE'),
@@ -76,7 +75,7 @@ try {
     @('.\data\criteria-catalog\criteria-catalog-migration-map.json','.\docs\criteria-rebuild-phase2\official-candidate\criteria-catalog-migration-map.json','MIGRATION_CANDIDATE'))) {
     $a = (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToLowerInvariant()
     $b = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash.ToLowerInvariant()
-    Write-Output "$($pair[2])_MATCH=$([bool]($a -ceq $b)) CURRENT=$a CANDIDATE=$b"
+    Write-Output "$($pair[2])_MATCH=$([bool]($a -ceq $b))"
     if ($a -cne $b) { throw "$($pair[2]) bytes differ." }
   }
 
