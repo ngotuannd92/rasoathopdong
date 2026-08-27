@@ -40,6 +40,14 @@ jobs:
               if ($found -ne $count) { throw "Expected $count occurrence(s), found $found." }
               return $text.Replace($old,$new)
             }
+            $tempHelper = @(
+              '    private static string GetTestTempPath()',
+              '    {',
+              '        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");',
+              '        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;',
+              '    }',
+              ''
+            ) -join "`n"
 
             $publish = 'tests\RasoatHopDong.Tests\Stage7PublishContractTests.cs'
             if ([IO.File]::ReadAllText($publish).Contains('private static string GetTestTempPath()')) {
@@ -48,17 +56,7 @@ jobs:
               Edit-File $publish {
                 param($text)
                 $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 2
-                $needle = '    private static string CreateTempRoot()'
-                $helper = @'
-    private static string GetTestTempPath()
-    {
-        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");
-        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;
-    }
-
-    private static string CreateTempRoot()
-'@
-                return Replace-Required $text $needle $helper 1
+                return Replace-Required $text '    private static string CreateTempRoot()' ($tempHelper + "`n    private static string CreateTempRoot()") 1
               }
               Write-Output 'PUBLISH_FIX=applied'
             }
@@ -70,17 +68,7 @@ jobs:
               Edit-File $installer {
                 param($text)
                 $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 6
-                $needle = '    private static void DeleteTempRoot(string root)'
-                $helper = @'
-    private static string GetTestTempPath()
-    {
-        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");
-        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;
-    }
-
-    private static void DeleteTempRoot(string root)
-'@
-                return Replace-Required $text $needle $helper 1
+                return Replace-Required $text '    private static void DeleteTempRoot(string root)' ($tempHelper + "`n    private static void DeleteTempRoot(string root)") 1
               }
               Write-Output 'INSTALLER_FIX=applied'
             }
