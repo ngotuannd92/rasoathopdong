@@ -1,4 +1,4 @@
-name: Stage3 Targeted Regression
+name: Stage3 Fix Test Isolation
 
 on:
   push:
@@ -12,14 +12,14 @@ permissions:
   contents: read
 
 jobs:
-  targeted:
+  fix-test-isolation:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Diagnose Stage7 publish migration regression
+      - name: Isolate Windows temp fixtures and run targeted regression
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -29,18 +29,69 @@ jobs:
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
           Push-Location $source
           try {
-            Write-Output "TEMP=$([IO.Path]::GetTempPath())"
-            Write-Output "RUNNER_TEMP=$env:RUNNER_TEMP"
-            $log = Join-Path $logRoot 'stage7-publish-schema1.log'
-            $old = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'FullyQualifiedName=RasoatHopDong.Tests.Stage7PublishContractTests.PrepareOutput_ShouldMigrateSchema1MarkerOnlyWhenOutputIsEmpty' --logger 'console;verbosity=detailed' *> $log
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = $old
-            Write-Output "TARGETED_EXIT=$code"
-            Get-Content $log -Tail 80 | ForEach-Object {
-              $_ -replace [regex]::Escape($env:USERPROFILE), '<USERPROFILE>' -replace [regex]::Escape($env:RUNNER_TEMP), '<RUNNER_TEMP>'
+            function Edit-File([string]$path, [scriptblock]$edit) {
+              $text = [IO.File]::ReadAllText($path)
+              $updated = & $edit $text
+              if ($updated -eq $text) { throw "No edit applied to $path" }
+              [IO.File]::WriteAllText($path, $updated, [Text.UTF8Encoding]::new($false))
             }
-            exit $code
+            function Replace-Required([string]$text,[string]$old,[string]$new,[int]$count) {
+              $found = ([regex]::Matches($text,[regex]::Escape($old))).Count
+              if ($found -ne $count) { throw "Expected $count occurrence(s), found $found." }
+              return $text.Replace($old,$new)
+            }
+
+            $publish = 'tests\RasoatHopDong.Tests\Stage7PublishContractTests.cs'
+            if ([IO.File]::ReadAllText($publish).Contains('private static string GetTestTempPath()')) {
+              Write-Output 'PUBLISH_FIX=already-applied'
+            } else {
+              Edit-File $publish {
+                param($text)
+                $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 2
+                $needle = '    private static string CreateTempRoot()'
+                $helper = "    private static string GetTestTempPath()`n    {`n        var runnerTemp = Environment.GetEnvironmentVariable(\"RUNNER_TEMP\");`n        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;`n    }`n`n    private static string CreateTempRoot()"
+                return Replace-Required $text $needle $helper 1
+              }
+              Write-Output 'PUBLISH_FIX=applied'
+            }
+
+            $installer = 'tests\RasoatHopDong.Tests\Stage7InstallerContractTests.cs'
+            if ([IO.File]::ReadAllText($installer).Contains('private static string GetTestTempPath()')) {
+              Write-Output 'INSTALLER_FIX=already-applied'
+            } else {
+              Edit-File $installer {
+                param($text)
+                $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 6
+                $needle = '    private static void DeleteTempRoot(string root)'
+                $helper = "    private static string GetTestTempPath()`n    {`n        var runnerTemp = Environment.GetEnvironmentVariable(\"RUNNER_TEMP\");`n        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;`n    }`n`n    private static void DeleteTempRoot(string root)"
+                return Replace-Required $text $needle $helper 1
+              }
+              Write-Output 'INSTALLER_FIX=applied'
+            }
+
+            git diff --check *> (Join-Path $logRoot 'test-isolation-diff-check.log')
+            if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
+
+            $oldPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & dotnet build .\rasoathopdong.sln -c Debug --no-restore --nologo *> (Join-Path $logRoot 'test-isolation-build.log')
+            $buildCode = $LASTEXITCODE
+            if ($buildCode -eq 0) {
+              & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'FullyQualifiedName~Stage7PublishContractTests|FullyQualifiedName~Stage7InstallerContractTests' --logger 'console;verbosity=minimal' *> (Join-Path $logRoot 'test-isolation-stage7.log')
+              $testCode = $LASTEXITCODE
+            } else { $testCode = 999 }
+            $ErrorActionPreference = $oldPreference
+
+            Write-Output "BUILD_EXIT=$buildCode TEST_EXIT=$testCode"
+            if ($testCode -eq 0) {
+              git add $publish $installer *> $null
+              git commit -m 'test(stage3): isolate Windows runner temp fixtures' *> (Join-Path $logRoot 'test-isolation-commit.log')
+              if ($LASTEXITCODE -ne 0) { throw 'Local test-isolation commit failed.' }
+              Write-Output "LOCAL_COMMIT=$((git rev-parse HEAD).Trim())"
+              Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') | Where-Object { $_ -match 'Passed!|Failed!|Total tests|Test Run Successful|Test Run Failed' } | Select-Object -Last 8
+            } else {
+              Get-Content (Join-Path $logRoot 'test-isolation-stage7.log') -Tail 60 -ErrorAction SilentlyContinue
+              throw 'Targeted Stage7 regression failed after test-isolation fix.'
+            }
           }
           finally { Pop-Location }
