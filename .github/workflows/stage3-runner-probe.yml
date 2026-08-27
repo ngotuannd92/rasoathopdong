@@ -1,4 +1,4 @@
-name: Stage3 Full Debug Regression
+name: Stage3 Full Release Regression
 
 on:
   push:
@@ -12,29 +12,29 @@ permissions:
   contents: read
 
 jobs:
-  full-debug:
+  full-release:
     runs-on: self-hosted
     timeout-minutes: 90
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Run complete Debug test suite
+      - name: Run complete Release test suite
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
           $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
           $source = 'C:\Stage3-Work\source-current'
-          $logRoot = 'C:\Stage3-Work\logs\full-debug'
+          $logRoot = 'C:\Stage3-Work\logs\full-release'
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
           Push-Location $source
           try {
             $oldPreference = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
-            & dotnet build .\rasoathopdong.sln -c Debug --no-restore --nologo *> (Join-Path $logRoot 'build.log')
+            & dotnet build .\rasoathopdong.sln -c Release --no-restore --nologo *> (Join-Path $logRoot 'build.log')
             $buildCode = $LASTEXITCODE
             if ($buildCode -eq 0) {
-              & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-full-debug.trx' --logger 'console;verbosity=normal' *> (Join-Path $logRoot 'tests.log')
+              & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Release --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-full-release.trx' --logger 'console;verbosity=normal' *> (Join-Path $logRoot 'tests.log')
               $testCode = $LASTEXITCODE
             } else { $testCode = 999 }
             $ErrorActionPreference = $oldPreference
@@ -42,11 +42,10 @@ jobs:
             Write-Output "BUILD_EXIT=$buildCode TEST_EXIT=$testCode LOCAL_HEAD=$((git rev-parse HEAD).Trim())"
             if ($buildCode -ne 0) {
               Get-Content (Join-Path $logRoot 'build.log') -Tail 80
-              throw 'Full Debug build failed.'
+              throw 'Full Release build failed.'
             }
-
             $testLog = Join-Path $logRoot 'tests.log'
             Get-Content $testLog | Where-Object { $_ -match '^Failed!|^Passed!|^Total tests:|^\s+Failed:|^\s+Passed:|^\s+Skipped:|Test Run Failed|Test Run Successful|\[FAIL\]$' } | Select-Object -Last 120
-            if ($testCode -ne 0) { throw "Full Debug tests failed with exit code $testCode." }
+            if ($testCode -ne 0) { throw "Full Release tests failed with exit code $testCode." }
           }
           finally { Pop-Location }
