@@ -49,7 +49,8 @@ jobs:
               ''
             ) -join "`n"
 
-            $publish = 'tests\RasoatHopDong.Tests\Stage7PublishContractTests.cs'
+            $publishRelative = 'tests\RasoatHopDong.Tests\Stage7PublishContractTests.cs'
+            $publish = Join-Path $source $publishRelative
             if ([IO.File]::ReadAllText($publish).Contains('private static string GetTestTempPath()')) {
               Write-Output 'PUBLISH_FIX=already-applied'
             } else {
@@ -61,7 +62,8 @@ jobs:
               Write-Output 'PUBLISH_FIX=applied'
             }
 
-            $installer = 'tests\RasoatHopDong.Tests\Stage7InstallerContractTests.cs'
+            $installerRelative = 'tests\RasoatHopDong.Tests\Stage7InstallerContractTests.cs'
+            $installer = Join-Path $source $installerRelative
             if ([IO.File]::ReadAllText($installer).Contains('private static string GetTestTempPath()')) {
               Write-Output 'INSTALLER_FIX=already-applied'
             } else {
@@ -88,7 +90,7 @@ jobs:
 
             Write-Output "BUILD_EXIT=$buildCode TEST_EXIT=$testCode"
             if ($testCode -eq 0) {
-              git add $publish $installer *> $null
+              git add -- $publishRelative $installerRelative *> $null
               git commit -m 'test(stage3): isolate Windows runner temp fixtures' *> (Join-Path $logRoot 'test-isolation-commit.log')
               if ($LASTEXITCODE -ne 0) { throw 'Local test-isolation commit failed.' }
               Write-Output "LOCAL_COMMIT=$((git rev-parse HEAD).Trim())"
