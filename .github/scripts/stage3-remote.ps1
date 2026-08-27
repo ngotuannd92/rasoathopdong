@@ -1,48 +1,41 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$source = 'C:\Stage3-Work\source-current'
-$baseline = 'D:\rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3.zip'
-$expectedBaselineHash = '81bcd973cbbc8f48e16fb3b19d3d24de31422ff23baf21bf09497a1ddd93a7d6'
-$tempRoot = 'C:\Stage3-Work\historical-temp-r1'
+$probeProfile = 'C:\Stage3-Work\historical-profile-probe'
+$staleTemp = 'C:\Stage3-Work\historical-temp-r1'
 
-if (-not (Test-Path -LiteralPath $baseline -PathType Leaf)) { throw "Missing baseline: $baseline" }
-if (Test-Path -LiteralPath $tempRoot) { throw "Owned historical temp already exists: $tempRoot" }
-$actual = (Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
-Write-Output "BASELINE_SHA256=$actual MATCH=$([bool]($actual -ceq $expectedBaselineHash))"
-if ($actual -cne $expectedBaselineHash) { throw 'Historical baseline hash mismatch.' }
-New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-
-$oldTemp = $env:TEMP
-$oldTmp = $env:TMP
-$oldPath = $env:PATH
+Write-Output 'KNOWN_FOLDER_PROBE_BEGIN'
+Write-Output "IDENTITY=$([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Write-Output "BEFORE_LOCALAPPDATA_ENV=$env:LOCALAPPDATA"
+Write-Output "BEFORE_USERPROFILE_ENV=$env:USERPROFILE"
+Write-Output "BEFORE_SPECIAL_LOCALAPPDATA=$([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))"
+if (Test-Path -LiteralPath $probeProfile) { throw "Probe profile already exists: $probeProfile" }
+New-Item -ItemType Directory -Force -Path (Join-Path $probeProfile 'AppData\Local'),(Join-Path $probeProfile 'AppData\Roaming') | Out-Null
+$oldLocal = $env:LOCALAPPDATA; $oldApp = $env:APPDATA; $oldProfile = $env:USERPROFILE; $oldHome = $env:HOME
 try {
-  $env:TEMP = $tempRoot
-  $env:TMP = $tempRoot
-  $env:PATH = 'C:\Stage3-Work\pyenv\Scripts;' + $env:PATH
-  $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-  Write-Output "IDENTITY=$([Security.Principal.WindowsIdentity]::GetCurrent().Name) SESSION=$((Get-Process -Id $PID).SessionId)"
-  Write-Output "TEMP=$env:TEMP TMP=$env:TMP DOTNET_TEMP=$([IO.Path]::GetTempPath())"
-  Push-Location $source
-  try {
-    Write-Output 'HISTORICAL_BASELINE_BEGIN'
-    $script = Join-Path $source 'scripts\verify-historical-baseline.ps1'
-    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -BaselineZipPath $baseline
-    $code = $LASTEXITCODE
-    Write-Output "HISTORICAL_VERIFIER_EXIT=$code"
-    if ($code -ne 0) { throw "Historical verifier failed with exit code $code" }
-    Write-Output 'STAGE0_TO_STAGE7_HISTORICAL=PASS'
-    Write-Output 'HISTORICAL_BASELINE_END'
-  }
-  finally { Pop-Location }
+  $env:LOCALAPPDATA = Join-Path $probeProfile 'AppData\Local'
+  $env:APPDATA = Join-Path $probeProfile 'AppData\Roaming'
+  $env:USERPROFILE = $probeProfile
+  $env:HOME = $probeProfile
+  Write-Output "PARENT_AFTER_ENV_SPECIAL=$([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))"
+  $child = & powershell.exe -NoProfile -NonInteractive -Command '[Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData); $env:LOCALAPPDATA; $env:USERPROFILE'
+  $child | ForEach-Object { Write-Output "CHILD_VALUE=$_" }
 }
 finally {
-  $env:TEMP = $oldTemp
-  $env:TMP = $oldTmp
-  $env:PATH = $oldPath
-  if (Test-Path -LiteralPath $tempRoot -PathType Container) {
-    $full = [IO.Path]::GetFullPath($tempRoot)
-    if (-not $full.StartsWith('C:\Stage3-Work\historical-temp-', [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing unexpected temp cleanup: $full" }
-    Get-ChildItem -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 } | ForEach-Object { throw "Refusing reparse point cleanup: $($_.FullName)" }
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force
+  $env:LOCALAPPDATA=$oldLocal; $env:APPDATA=$oldApp; $env:USERPROFILE=$oldProfile; $env:HOME=$oldHome
+  Remove-Item -LiteralPath $probeProfile -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-Output 'KNOWN_FOLDER_PROBE_END'
+
+Write-Output 'STALE_TEMP_CLEANUP_BEGIN'
+if (Test-Path -LiteralPath $staleTemp -PathType Container) {
+  $full = [IO.Path]::GetFullPath($staleTemp)
+  if ($full -cne 'C:\Stage3-Work\historical-temp-r1') { throw "Unexpected stale temp path: $full" }
+  $reparse = @(Get-ChildItem -LiteralPath $staleTemp -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+  if ($reparse.Count -ne 0) { throw "Refusing stale temp cleanup with reparse points: $($reparse[0].FullName)" }
+  for ($i=1; $i -le 20; $i++) {
+    try { Remove-Item -LiteralPath $staleTemp -Recurse -Force -ErrorAction Stop; break }
+    catch { if ($i -eq 20) { throw }; Start-Sleep -Milliseconds 500 }
   }
 }
+Write-Output "STALE_TEMP_REMAINS=$([bool](Test-Path -LiteralPath $staleTemp))"
+Write-Output 'STALE_TEMP_CLEANUP_END'
