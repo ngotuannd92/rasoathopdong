@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $source = 'C:\Stage3-Work\source-current'
-$logRoot = 'C:\Stage3-Work\logs\stage3-pdf-ocr'
+$logRoot = 'C:\Stage3-Work\logs\stage3-compatibility'
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 Push-Location $source
 try {
@@ -17,12 +17,19 @@ try {
     if ($code -ne 0) { Get-Content $log -Tail 120; throw "$name $config failed." }
   }
   Write-Output "SOURCE_HEAD=$((git rev-parse HEAD).Trim())"
-  $ocr = 'FullyQualifiedName~PdfDocumentReaderTests.Read_ShouldRecognizeRealVietnameseScanOnWindows|FullyQualifiedName~Stage2CandidateRuntimeGateTests.WorkingSetCandidates_ReviewGolden_ShouldCoverDocxPdfTextAndOcrWithProductionPipeline'
-  $pdf = 'FullyQualifiedName~PdfDocumentReaderTests.Read_ShouldExtractTextFromSimpleTextPdfWithoutCallingOcr|FullyQualifiedName~ReviewServiceTests.ReviewContract_ShouldRunFromPdfToReviewResult|FullyQualifiedName~Stage8CompareServiceIntegrationTests.ProductionCompare_ShouldCompareTwoRealPdfFilesWithSharedBaseCriteria'
-  Run-Test 'ocr-real-runtime' 'Debug' $ocr
-  Run-Test 'ocr-real-runtime' 'Release' $ocr
-  Run-Test 'pdf-production-runtime' 'Debug' $pdf
-  Run-Test 'pdf-production-runtime' 'Release' $pdf
-  Write-Output 'STAGE3_PDF_OCR_RUNTIME=PASS'
+  $data = 'FullyQualifiedName~History|FullyQualifiedName~WorkingSet|FullyQualifiedName~LocalDataUpgrade|FullyQualifiedName~Migration|FullyQualifiedName~CriteriaRestore|FullyQualifiedName~SettingsStorage'
+  $release = 'FullyQualifiedName~Export|FullyQualifiedName~Update|FullyQualifiedName~Installer|FullyQualifiedName~Publish|FullyQualifiedName~Recovery'
+  Run-Test 'data-safety-compatibility' 'Debug' $data
+  Run-Test 'data-safety-compatibility' 'Release' $data
+  Run-Test 'release-paths-backend' 'Debug' $release
+  Run-Test 'release-paths-backend' 'Release' $release
+  $env:STAGE2_POST_PROMOTION = '1'
+  $mig010 = 'FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.Migration010To030_ShouldUseDirectAuthorizedTransitionAndPreserveCustomData'
+  Run-Test 'legacy-010-to-030' 'Debug' $mig010
+  Run-Test 'legacy-010-to-030' 'Release' $mig010
+  Write-Output 'STAGE3_COMPATIBILITY_BACKEND=PASS'
 }
-finally { Pop-Location }
+finally {
+  $env:STAGE2_POST_PROMOTION = $null
+  Pop-Location
+}
