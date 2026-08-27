@@ -49,7 +49,15 @@ jobs:
                 param($text)
                 $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 2
                 $needle = '    private static string CreateTempRoot()'
-                $helper = "    private static string GetTestTempPath()`n    {`n        var runnerTemp = Environment.GetEnvironmentVariable(\"RUNNER_TEMP\");`n        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;`n    }`n`n    private static string CreateTempRoot()"
+                $helper = @'
+    private static string GetTestTempPath()
+    {
+        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");
+        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;
+    }
+
+    private static string CreateTempRoot()
+'@
                 return Replace-Required $text $needle $helper 1
               }
               Write-Output 'PUBLISH_FIX=applied'
@@ -63,7 +71,15 @@ jobs:
                 param($text)
                 $text = Replace-Required $text 'Path.GetTempPath()' 'GetTestTempPath()' 6
                 $needle = '    private static void DeleteTempRoot(string root)'
-                $helper = "    private static string GetTestTempPath()`n    {`n        var runnerTemp = Environment.GetEnvironmentVariable(\"RUNNER_TEMP\");`n        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;`n    }`n`n    private static void DeleteTempRoot(string root)"
+                $helper = @'
+    private static string GetTestTempPath()
+    {
+        var runnerTemp = Environment.GetEnvironmentVariable("RUNNER_TEMP");
+        return string.IsNullOrWhiteSpace(runnerTemp) ? Path.GetTempPath() : runnerTemp;
+    }
+
+    private static void DeleteTempRoot(string root)
+'@
                 return Replace-Required $text $needle $helper 1
               }
               Write-Output 'INSTALLER_FIX=applied'
