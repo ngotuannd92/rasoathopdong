@@ -1,4 +1,4 @@
-name: Stage3 Historical Baseline Deep Locate
+name: Stage3 Core E2E Gates
 
 on:
   push:
@@ -12,54 +12,66 @@ permissions:
   contents: read
 
 jobs:
-  locate-baseline:
+  core-e2e:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Search user profiles and local drives for historical baseline
+      - name: Run Review Compare Benchmark and criteria runtime gates
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          $expected = '81bcd973cbbc8f48e16fb3b19d3d24de31422ff23baf21bf09497a1ddd93a7d6'
-          $targetDir = 'C:\Stage3-Work\baseline'
-          $target = Join-Path $targetDir 'rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3.zip'
-          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-
-          if (Test-Path $target) {
-            $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($hash -eq $expected) { Write-Output "HISTORICAL_BASELINE=ready SHA256=$hash"; exit 0 }
-            Remove-Item -LiteralPath $target -Force
-          }
-
-          $roots = [System.Collections.Generic.List[string]]::new()
-          foreach ($profile in @(Get-ChildItem 'C:\Users' -Directory -Force -ErrorAction SilentlyContinue)) {
-            foreach ($leaf in @('Desktop','Documents','Downloads')) {
-              $p = Join-Path $profile.FullName $leaf
-              if (Test-Path $p) { $roots.Add($p) }
+          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+          $source = 'C:\Stage3-Work\source-current'
+          $logRoot = 'C:\Stage3-Work\logs\core-e2e'
+          $fixtureRoot = 'C:\Stage3-Work\fixtures\stage2-runtime'
+          New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+          if (Test-Path $fixtureRoot) { Remove-Item $fixtureRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
+          Push-Location $source
+          try {
+            function Run-Native([string]$name,[scriptblock]$command) {
+              $log = Join-Path $logRoot ($name + '.log')
+              $old = $ErrorActionPreference
+              $ErrorActionPreference = 'Continue'
+              & $command *> $log
+              $code = $LASTEXITCODE
+              $ErrorActionPreference = $old
+              Write-Output "GATE=$name EXIT=$code"
+              if ($code -ne 0) {
+                Get-Content $log -Tail 80 -ErrorAction SilentlyContinue
+                throw "$name failed."
+              }
+              Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Passed!|Failed!|Total tests:|Test Run Successful|PASS|PASSED' } | Select-Object -Last 12
             }
-          }
-          foreach ($p in @('C:\Stage3','C:\Stage3-Work','C:\work','C:\src','C:\actions-runner\_work','D:\','E:\')) {
-            if (Test-Path $p) { $roots.Add($p) }
-          }
 
-          $found = $null
-          foreach ($root in @($roots | Select-Object -Unique)) {
-            $candidates = @(Get-ChildItem -LiteralPath $root -Filter 'rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3*.zip' -File -Recurse -Force -ErrorAction SilentlyContinue)
-            foreach ($candidate in $candidates) {
-              try { $hash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } catch { continue }
-              if ($hash -eq $expected) { $found = $candidate.FullName; break }
-            }
-            if ($found) { break }
-          }
+            Run-Native 'phase2-static' { python .\scripts\verify-phase2-static.py }
+            Run-Native 'phase2-content-quality' { python .\scripts\verify-phase2-content-quality.py }
+            Run-Native 'phase2-targeted-semantics' { python .\scripts\verify-phase2-targeted-semantics.py }
+            Run-Native 'phase2-compare-corpus' { python .\scripts\verify-phase2-compare-corpus.py }
+            Run-Native 'phase2-golden-semantics' { python .\scripts\verify-phase2-golden-semantics.py }
 
-          if (-not $found) {
-            Write-Output 'HISTORICAL_BASELINE=missing-after-deep-search'
-            exit 2
+            Run-Native 'candidate-runtime' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'Stage2Runtime=Candidate' --logger 'console;verbosity=minimal' }
+            Run-Native 'current-fixture' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'Stage2Runtime=CurrentFixture' --logger 'console;verbosity=minimal' }
+
+            $env:STAGE2_POST_PROMOTION = '1'
+            $exactFilter = 'FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialReviewGolden|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialCompareCorpus|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialBenchmarkV3|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.ExactOfficialHistoryAndExports'
+            Run-Native 'exact-official-e2e' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter $exactFilter --logger 'console;verbosity=minimal' }
+
+            $env:STAGE2_RUNTIME_FIXTURE_DIR = $fixtureRoot
+            $env:STAGE2_PREPARE_MIGRATION_FIXTURE = '1'
+            Run-Native 'prepare-migration-fixture' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'Stage2Runtime=PrepareMigrationFixture' --logger 'console;verbosity=minimal' }
+            $env:STAGE2_PREPARE_MIGRATION_FIXTURE = $null
+            $migrationFilter = 'FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.Migration020To030|FullyQualifiedName~Stage2PostPromotionRuntimeGateTests.Migration010To030'
+            Run-Native 'catalog-migration-preservation' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter $migrationFilter --logger 'console;verbosity=minimal' }
+
+            Write-Output "CORE_E2E=PASS LOCAL_HEAD=$((git rev-parse HEAD).Trim())"
           }
-          Copy-Item -LiteralPath $found -Destination $target -Force
-          $copied = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($copied -ne $expected) { throw 'Copied historical baseline hash mismatch.' }
-          Write-Output "HISTORICAL_BASELINE=ready SHA256=$copied"
+          finally {
+            $env:STAGE2_POST_PROMOTION = $null
+            $env:STAGE2_RUNTIME_FIXTURE_DIR = $null
+            $env:STAGE2_PREPARE_MIGRATION_FIXTURE = $null
+            Pop-Location
+          }
