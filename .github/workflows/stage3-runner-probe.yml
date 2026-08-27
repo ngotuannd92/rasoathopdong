@@ -1,4 +1,4 @@
-name: Stage3 Bootstrap
+name: Stage3 Baseline Regression
 
 on:
   push:
@@ -12,88 +12,83 @@ permissions:
   contents: read
 
 jobs:
-  bootstrap:
+  baseline:
     runs-on: self-hosted
-    timeout-minutes: 20
+    timeout-minutes: 90
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Locate current Stage3 source
+      - name: Run baseline regression on current source
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
+          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+          $env:DOTNET_NOLOGO = '1'
 
-          $workRoot = 'C:\Stage3-Work'
-          $workSource = Join-Path $workRoot 'source-current'
-          New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
+          $source = 'C:\Stage3-Work\source-current'
+          $stateRoot = 'C:\Stage3-Work\state'
+          $logRoot = 'C:\Stage3-Work\logs\baseline'
+          if (-not (Test-Path (Join-Path $source 'rasoathopdong.sln'))) { throw 'Stage3 source is not ready.' }
+          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 
-          $roots = @(
-            (Join-Path $env:USERPROFILE 'Desktop'),
-            (Join-Path $env:USERPROFILE 'Documents'),
-            (Join-Path $env:USERPROFILE 'Downloads'),
-            'C:\Stage3',
-            'C:\Stage3-Work',
-            'C:\work',
-            'C:\src',
-            'C:\actions-runner\_work'
-          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
-
-          function Is-TargetVersion([string]$versionFile) {
-            try {
-              $text = [IO.File]::ReadAllText($versionFile)
-              return $text.Contains('<AppVersion>0.4.0</AppVersion>') -and
-                     $text.Contains('<EngineVersion>0.3.1</EngineVersion>') -and
-                     $text.Contains('<CriteriaCatalogVersion>0.3.0</CriteriaCatalogVersion>') -and
-                     $text.Contains('<DatabaseSchemaVersion>3</DatabaseSchemaVersion>') -and
-                     $text.Contains('<CriteriaSnapshotSchemaVersion>4</CriteriaSnapshotSchemaVersion>') -and
-                     $text.Contains('<CriteriaCatalogMigrationMapSchemaVersion>3</CriteriaCatalogMigrationMapSchemaVersion>')
-            } catch { return $false }
-          }
-
-          $sourceRoot = $null
-          foreach ($root in $roots) {
-            $files = Get-ChildItem -Path $root -Filter Version.props -File -Recurse -ErrorAction SilentlyContinue
-            foreach ($file in $files) {
-              if ($file.FullName -like "$workSource*") { continue }
-              if ($file.Directory.Name -ne 'eng') { continue }
-              if (Is-TargetVersion $file.FullName) {
-                $sourceRoot = Split-Path $file.Directory.FullName -Parent
-                break
-              }
+          function Run-Step([string]$name, [scriptblock]$command) {
+            $log = Join-Path $logRoot ($name + '.log')
+            & $command *> $log
+            $code = $LASTEXITCODE
+            Write-Output "STEP=$name EXIT=$code"
+            if ($code -ne 0) {
+              Get-Content $log -Tail 40 -ErrorAction SilentlyContinue
+              throw "$name failed with exit code $code"
             }
-            if ($sourceRoot) { break }
+            $summary = Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Passed!|Failed!|Build succeeded|Build FAILED|Total tests|Test Run Successful|Test Run Failed' } | Select-Object -Last 8
+            if ($summary) { $summary | ForEach-Object { Write-Output $_ } }
           }
 
-          if (-not $sourceRoot) {
-            $zip = $null
-            foreach ($root in $roots) {
-              $zip = Get-ChildItem -Path $root -Filter 'rasoathopdong-v0.4.0-stage2-complete-final*.zip' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($zip) { break }
+          Push-Location $source
+          try {
+            if (-not (Test-Path '.git')) {
+              git init -b stage3-local | Out-Null
+              git config user.name 'Stage3-Win11'
+              git config user.email 'stage3-local@localhost'
+              git add -A
+              git commit -m 'Stage3 baseline source v0.4.0' | Out-Null
+              git tag stage3-baseline-v0.4.0
             }
-            if ($zip) {
-              $extractRoot = Join-Path $workRoot 'incoming-extracted'
-              if (Test-Path $extractRoot) { Remove-Item $extractRoot -Recurse -Force }
-              New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
-              Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extractRoot -Force
-              $candidate = Get-ChildItem -Path $extractRoot -Filter Version.props -File -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.Directory.Name -eq 'eng' -and (Is-TargetVersion $_.FullName) } |
-                Select-Object -First 1
-              if ($candidate) { $sourceRoot = Split-Path $candidate.Directory.FullName -Parent }
+
+            $baselineCommit = (git rev-parse HEAD).Trim()
+            $catalogHash = (Get-FileHash '.\data\criteria-catalog\official-criteria-catalog.json' -Algorithm SHA256).Hash.ToLowerInvariant()
+            $versionHash = (Get-FileHash '.\eng\Version.props' -Algorithm SHA256).Hash.ToLowerInvariant()
+
+            Run-Step 'restore' { dotnet restore .\rasoathopdong.sln --nologo }
+            Run-Step 'build-debug' { dotnet build .\rasoathopdong.sln -c Debug --no-restore --nologo }
+            Run-Step 'test-debug' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-baseline-debug.trx' --logger 'console;verbosity=minimal' }
+            Run-Step 'build-release' { dotnet build .\rasoathopdong.sln -c Release --no-restore --nologo }
+            Run-Step 'test-release' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Release --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-baseline-release.trx' --logger 'console;verbosity=minimal' }
+
+            $state = [ordered]@{
+              timestampUtc = [DateTimeOffset]::UtcNow.ToString('O')
+              machine = $env:COMPUTERNAME
+              runner = 'stage3-win11'
+              source = $source
+              baselineCommit = $baselineCommit
+              appVersion = '0.4.0'
+              engineVersion = '0.3.1'
+              catalogVersion = '0.3.0'
+              databaseSchemaVersion = 3
+              snapshotSchemaVersion = 4
+              migrationMapSchemaVersion = 3
+              catalogSha256 = $catalogHash
+              versionPropsSha256 = $versionHash
+              debugBuild = 'pass'
+              debugTests = 'pass'
+              releaseBuild = 'pass'
+              releaseTests = 'pass'
             }
+            $state | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $stateRoot 'baseline.json') -Encoding UTF8
+            Write-Output "BASELINE=PASS COMMIT=$baselineCommit"
           }
-
-          if (-not $sourceRoot) {
-            Write-Output 'STAGE3_SOURCE_READY=no'
-            throw 'Current v0.4.0 / engine 0.3.1 source was not found on Stage3-Win11.'
+          finally {
+            Pop-Location
           }
-
-          if (Test-Path $workSource) { Remove-Item $workSource -Recurse -Force }
-          New-Item -ItemType Directory -Path $workSource -Force | Out-Null
-          Copy-Item -Path (Join-Path $sourceRoot '*') -Destination $workSource -Recurse -Force
-
-          $vf = Join-Path $workSource 'eng\Version.props'
-          if (-not (Is-TargetVersion $vf)) { throw 'Copied Stage3 source version contract does not match expected current source.' }
-          Write-Output 'STAGE3_SOURCE_READY=yes'
-          Write-Output "WORK_SOURCE=$workSource"
-          Write-Output 'APP=0.4.0 ENGINE=0.3.1 CATALOG=0.3.0 DB=3 SNAPSHOT=4 MIGRATION_MAP=3'
