@@ -1,19 +1,22 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$expectedName = 'rasoathopdong-v0.4.0-phase1-final-closed-r13(20260818-173343).zip'
-$expectedHash = '9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b'
-$roots = @('C:\Stage3-Work', "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents") | Where-Object { Test-Path $_ } | Select-Object -Unique
-$matches = foreach ($root in $roots) {
-  Get-ChildItem -LiteralPath $root -Recurse -File -Filter $expectedName -ErrorAction SilentlyContinue
+$source = 'C:\Stage3-Work\source-current'
+Push-Location $source
+try {
+  Write-Output 'BASELINE_CANDIDATES_BEGIN'
+  Get-ChildItem . -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in '.json','.md','.props','.zip' } |
+    ForEach-Object {
+      if ($_.Extension -eq '.zip') {
+        if ($_.Name -match 'phase1|0\.2\.0|baseline|closed|r13') { "ZIP=$($_.FullName) SIZE=$($_.Length)" }
+      } else {
+        $hit = Select-String -LiteralPath $_.FullName -Pattern '0.2.0','phase1-final-closed','9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b' -SimpleMatch -Quiet -ErrorAction SilentlyContinue
+        if ($hit) { "FILE=$($_.FullName) SIZE=$($_.Length)" }
+      }
+    } | Select-Object -First 180
+  Write-Output 'BASELINE_CANDIDATES_END'
+  Write-Output 'BASELINE_DIRS_BEGIN'
+  Get-ChildItem .\.baseline,.\docs\criteria-rebuild-phase2 -Force -ErrorAction SilentlyContinue | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize
+  Write-Output 'BASELINE_DIRS_END'
 }
-if (-not $matches) {
-  Write-Output 'BASELINE_ARCHIVE=NOT_FOUND'
-  exit 0
-}
-foreach ($file in $matches) {
-  $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-  Write-Output "BASELINE_ARCHIVE=$($file.FullName)"
-  Write-Output "BASELINE_SIZE=$($file.Length)"
-  Write-Output "BASELINE_SHA256=$hash"
-  Write-Output "BASELINE_HASH_MATCH=$([bool]($hash -eq $expectedHash))"
-}
+finally { Pop-Location }
