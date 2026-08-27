@@ -1,4 +1,4 @@
-name: Stage3 Baseline Regression
+name: Stage3 Targeted Regression
 
 on:
   push:
@@ -12,83 +12,35 @@ permissions:
   contents: read
 
 jobs:
-  baseline:
+  targeted:
     runs-on: self-hosted
-    timeout-minutes: 90
+    timeout-minutes: 30
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Run baseline regression on current source
+      - name: Diagnose Stage7 publish migration regression
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
           $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-          $env:DOTNET_NOLOGO = '1'
-
           $source = 'C:\Stage3-Work\source-current'
-          $stateRoot = 'C:\Stage3-Work\state'
-          $logRoot = 'C:\Stage3-Work\logs\baseline'
-          if (-not (Test-Path (Join-Path $source 'rasoathopdong.sln'))) { throw 'Stage3 source is not ready.' }
-          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+          $logRoot = 'C:\Stage3-Work\logs\targeted'
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
-
-          function Run-Step([string]$name, [scriptblock]$command) {
-            $log = Join-Path $logRoot ($name + '.log')
-            & $command *> $log
-            $code = $LASTEXITCODE
-            Write-Output "STEP=$name EXIT=$code"
-            if ($code -ne 0) {
-              Get-Content $log -Tail 40 -ErrorAction SilentlyContinue
-              throw "$name failed with exit code $code"
-            }
-            $summary = Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Passed!|Failed!|Build succeeded|Build FAILED|Total tests|Test Run Successful|Test Run Failed' } | Select-Object -Last 8
-            if ($summary) { $summary | ForEach-Object { Write-Output $_ } }
-          }
-
           Push-Location $source
           try {
-            if (-not (Test-Path '.git')) {
-              git init -b stage3-local | Out-Null
-              git config user.name 'Stage3-Win11'
-              git config user.email 'stage3-local@localhost'
-              git add -A
-              git commit -m 'Stage3 baseline source v0.4.0' | Out-Null
-              git tag stage3-baseline-v0.4.0
+            Write-Output "TEMP=$([IO.Path]::GetTempPath())"
+            Write-Output "RUNNER_TEMP=$env:RUNNER_TEMP"
+            $log = Join-Path $logRoot 'stage7-publish-schema1.log'
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --filter 'FullyQualifiedName=RasoatHopDong.Tests.Stage7PublishContractTests.PrepareOutput_ShouldMigrateSchema1MarkerOnlyWhenOutputIsEmpty' --logger 'console;verbosity=detailed' *> $log
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = $old
+            Write-Output "TARGETED_EXIT=$code"
+            Get-Content $log -Tail 80 | ForEach-Object {
+              $_ -replace [regex]::Escape($env:USERPROFILE), '<USERPROFILE>' -replace [regex]::Escape($env:RUNNER_TEMP), '<RUNNER_TEMP>'
             }
-
-            $baselineCommit = (git rev-parse HEAD).Trim()
-            $catalogHash = (Get-FileHash '.\data\criteria-catalog\official-criteria-catalog.json' -Algorithm SHA256).Hash.ToLowerInvariant()
-            $versionHash = (Get-FileHash '.\eng\Version.props' -Algorithm SHA256).Hash.ToLowerInvariant()
-
-            Run-Step 'restore' { dotnet restore .\rasoathopdong.sln --nologo }
-            Run-Step 'build-debug' { dotnet build .\rasoathopdong.sln -c Debug --no-restore --nologo }
-            Run-Step 'test-debug' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Debug --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-baseline-debug.trx' --logger 'console;verbosity=minimal' }
-            Run-Step 'build-release' { dotnet build .\rasoathopdong.sln -c Release --no-restore --nologo }
-            Run-Step 'test-release' { dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Release --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-baseline-release.trx' --logger 'console;verbosity=minimal' }
-
-            $state = [ordered]@{
-              timestampUtc = [DateTimeOffset]::UtcNow.ToString('O')
-              machine = $env:COMPUTERNAME
-              runner = 'stage3-win11'
-              source = $source
-              baselineCommit = $baselineCommit
-              appVersion = '0.4.0'
-              engineVersion = '0.3.1'
-              catalogVersion = '0.3.0'
-              databaseSchemaVersion = 3
-              snapshotSchemaVersion = 4
-              migrationMapSchemaVersion = 3
-              catalogSha256 = $catalogHash
-              versionPropsSha256 = $versionHash
-              debugBuild = 'pass'
-              debugTests = 'pass'
-              releaseBuild = 'pass'
-              releaseTests = 'pass'
-            }
-            $state | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $stateRoot 'baseline.json') -Encoding UTF8
-            Write-Output "BASELINE=PASS COMMIT=$baselineCommit"
+            exit $code
           }
-          finally {
-            Pop-Location
-          }
+          finally { Pop-Location }
