@@ -1,111 +1,63 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$installer = 'C:\Stage3-Work\artifacts\installer-v0.4.0-stage3-r1\rasoathopdong-setup-0.4.0.exe'
-$publish = 'C:\Stage3-Work\artifacts\publish-v0.4.0-stage3'
-$recoveryRoot = 'C:\Stage3-Work\install-smoke\v0.4.0-r1'
-$installRoot = 'C:\Stage3-Work\install-smoke\v0.4.0-r3'
-$logRoot = 'C:\Stage3-Work\logs\installer-lifecycle-r3'
-$r1LogRoot = 'C:\Stage3-Work\logs\installer-lifecycle-r1'
-$appIdKeyName = '{80FFBA2A-9310-4855-8DC1-C026B40AAF2D}_is1'
-$webViewClient = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$exactStage7 = 'rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3.zip'
+$exactStage7Hash = '81bcd973cbbc8f48e16fb3b19d3d24de31422ff23baf21bf09497a1ddd93a7d6'
+$exactPhase1 = 'rasoathopdong-v0.4.0-phase1-final-closed-r13(20260818-173343).zip'
+$exactPhase1Hash = '9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b'
 
-if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Missing installer: $installer" }
-if (-not (Test-Path -LiteralPath $publish -PathType Container)) { throw "Missing publish: $publish" }
-if (Test-Path -LiteralPath $installRoot) { throw "Disposable r3 install root already exists: $installRoot" }
-if (Test-Path -LiteralPath $logRoot) { throw "Disposable r3 log root already exists: $logRoot" }
-New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+Write-Output 'SESSION_DIAGNOSTICS_BEGIN'
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$current = Get-Process -Id $PID
+Write-Output "IDENTITY=$identity POWERSHELL_SESSION_ID=$($current.SessionId) USERNAME=$env:USERNAME USERPROFILE=$env:USERPROFILE"
+Write-Output 'QUSER_BEGIN'
+$old = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& quser.exe 2>&1 | ForEach-Object { Write-Output $_ }
+Write-Output "QUSER_EXIT=$LASTEXITCODE"
+Write-Output 'QUSER_END'
+Write-Output 'EXPLORER_SESSIONS_BEGIN'
+Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object { Write-Output "EXPLORER_PID=$($_.Id) SESSION=$($_.SessionId)" }
+Write-Output 'EXPLORER_SESSIONS_END'
+$ErrorActionPreference = $old
+Write-Output 'SESSION_DIAGNOSTICS_END'
 
-function Get-ProductRegistryKeys {
-  $paths = @(
-    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName",
-    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName",
-    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName"
-  )
-  return @($paths | Where-Object { Test-Path -LiteralPath $_ })
+Write-Output 'DRIVES_BEGIN'
+Get-PSDrive -PSProvider FileSystem | ForEach-Object { Write-Output "DRIVE=$($_.Root) FREE=$($_.Free) USED=$($_.Used)" }
+Write-Output 'DRIVES_END'
+
+Write-Output 'BASELINE_SEARCH_BEGIN'
+$roots = New-Object System.Collections.Generic.List[string]
+foreach ($candidate in @('C:\Stage3-Work','C:\actions-runner','C:\Users','C:\Windows\ServiceProfiles','C:\Temp','C:\tmp')) {
+  if (Test-Path -LiteralPath $candidate -PathType Container) { $roots.Add($candidate) }
 }
-
-function Start-And-Wait {
-  param([string]$FilePath,[string[]]$Arguments,[string]$WorkingDirectory)
-  $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WorkingDirectory $WorkingDirectory -PassThru -Wait
-  try { return $process.ExitCode } finally { $process.Dispose() }
+foreach ($drive in Get-PSDrive -PSProvider FileSystem) {
+  if ($drive.Root -and $drive.Root -ne 'C:\') { $roots.Add($drive.Root) }
 }
-
-Write-Output 'R1_PARTIAL_RECOVERY_BEGIN'
-$active = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'rasoathopdong-setup-*' -or $_.ProcessName -like 'unins*' })
-Write-Output "R1_ACTIVE_SETUP_OR_UNINSTALL=$($active.Count)"
-if ($active.Count -ne 0) { throw 'Refusing cleanup while setup or uninstaller is active.' }
-$r1Entries = @(Get-ProductRegistryKeys)
-$r1App = Join-Path $recoveryRoot 'RasoatHopDong.App.exe'
-Write-Output "R1_REGISTRY_ENTRIES=$($r1Entries.Count) R1_ROOT_EXISTS=$([bool](Test-Path -LiteralPath $recoveryRoot)) R1_APP_EXISTS=$([bool](Test-Path -LiteralPath $r1App))"
-if ($r1Entries.Count -ne 0 -or (Test-Path -LiteralPath $r1App)) { throw 'R1 is not a safe partial-install cleanup candidate.' }
-if (Test-Path -LiteralPath $recoveryRoot -PathType Container) {
-  $rootFull = [IO.Path]::GetFullPath($recoveryRoot).TrimEnd('\') + '\'
-  $items = @(Get-ChildItem -LiteralPath $recoveryRoot -Recurse -Force -ErrorAction Stop)
-  Write-Output "R1_PARTIAL_ITEMS=$($items.Count)"
-  foreach ($item in $items | Select-Object -First 120) {
-    $full = [IO.Path]::GetFullPath($item.FullName)
-    if (-not $full.StartsWith($rootFull,[StringComparison]::OrdinalIgnoreCase)) { throw "Unexpected recovery path: $full" }
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Refusing to delete reparse point: $full" }
-    if ($item.PSIsContainer) { Write-Output "R1_DIR=$full" } else { Write-Output "R1_FILE=$full SIZE=$($item.Length)" }
+$seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+$matches = New-Object System.Collections.Generic.List[object]
+foreach ($root in $roots) {
+  if (-not $seen.Add($root)) { continue }
+  Write-Output "SEARCH_ROOT=$root"
+  foreach ($name in @($exactStage7,$exactPhase1)) {
+    Get-ChildItem -LiteralPath $root -Recurse -File -Filter $name -ErrorAction SilentlyContinue | ForEach-Object { $matches.Add($_) }
   }
-  $setupLog = Join-Path $r1LogRoot 'setup.log'
-  if (Test-Path -LiteralPath $setupLog -PathType Leaf) {
-    Write-Output 'R1_SETUP_LOG_TAIL_BEGIN'
-    Get-Content -LiteralPath $setupLog -Tail 80
-    Write-Output 'R1_SETUP_LOG_TAIL_END'
+}
+if ($matches.Count -eq 0) {
+  Write-Output 'EXACT_BASELINE_FILES_FOUND=0'
+} else {
+  foreach ($file in $matches) {
+    $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expected = if ($file.Name -ceq $exactStage7) { $exactStage7Hash } elseif ($file.Name -ceq $exactPhase1) { $exactPhase1Hash } else { '' }
+    Write-Output "BASELINE_FILE=$($file.FullName) SIZE=$($file.Length) SHA256=$hash EXPECTED=$expected MATCH=$([bool]($hash -ceq $expected))"
   }
-  Remove-Item -LiteralPath $recoveryRoot -Recurse -Force
 }
-Write-Output "R1_ROOT_AFTER_CLEANUP=$([bool](Test-Path -LiteralPath $recoveryRoot))"
-if (Test-Path -LiteralPath $recoveryRoot) { throw 'R1 owned partial root could not be removed.' }
-if (@(Get-ProductRegistryKeys).Count -ne 0) { throw 'Product registration appeared during R1 cleanup.' }
-Write-Output 'R1_PARTIAL_RECOVERY=PASS'
-Write-Output 'R1_PARTIAL_RECOVERY_END'
+Write-Output 'BASELINE_SEARCH_END'
 
-$webViewPaths = @(
-  "HKLM:\Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\$webViewClient",
-  "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$webViewClient"
-)
-$webViewVersion = $null
-foreach ($path in $webViewPaths) {
-  $props = Get-ItemProperty -LiteralPath $path -Name pv -ErrorAction SilentlyContinue
-  $value = if ($null -ne $props) { $props.pv } else { $null }
-  if (-not [string]::IsNullOrWhiteSpace([string]$value) -and [string]$value -ne '0.0.0.0') { $webViewVersion = [string]$value; Write-Output "WEBVIEW_INSTALLED_PATH=$path VERSION=$webViewVersion"; break }
+Write-Output 'HISTORICAL_CANDIDATE_NAMES_BEGIN'
+foreach ($root in $roots) {
+  Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.zip' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match 'rasoathopdong.*(stage7|phase1|0\.2\.8|0\.2\.0|criteria-validation)' } |
+    Select-Object -First 100 |
+    ForEach-Object { Write-Output "CANDIDATE=$($_.FullName) SIZE=$($_.Length)" }
 }
-if ([string]::IsNullOrWhiteSpace($webViewVersion)) { Write-Output 'INSTALLER_LIFECYCLE=NOT_RUN_WEBVIEW2_ABSENT'; exit 0 }
-if (@(Get-ProductRegistryKeys).Count -ne 0) { throw 'Product registration exists before r3 install.' }
-
-$setupLogR3 = Join-Path $logRoot 'setup-r3.log'
-$uninstallLogR3 = Join-Path $logRoot 'uninstall-r3.log'
-Write-Output 'INSTALL_R3_BEGIN'
-$installCode = Start-And-Wait -FilePath $installer -Arguments @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOICONS',"/DIR=$installRoot", "/LOG=$setupLogR3") -WorkingDirectory (Split-Path -Parent $installer)
-Write-Output "INSTALL_R3_EXIT=$installCode"
-if ($installCode -ne 0) { if (Test-Path $setupLogR3) { Get-Content $setupLogR3 -Tail 120 }; throw "Installer r3 returned $installCode" }
-
-$appInstalled = Join-Path $installRoot 'RasoatHopDong.App.exe'
-$helperInstalled = Join-Path $installRoot 'RasoatHopDong.UpdateHelper.exe'
-$uninstaller = Join-Path $installRoot 'unins000.exe'
-foreach ($required in @($appInstalled,$helperInstalled,$uninstaller)) { if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Installed file missing: $required" } }
-$appInstalledHash = (Get-FileHash -LiteralPath $appInstalled -Algorithm SHA256).Hash.ToLowerInvariant()
-$appPublishHash = (Get-FileHash -LiteralPath (Join-Path $publish 'RasoatHopDong.App.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
-$helperInstalledHash = (Get-FileHash -LiteralPath $helperInstalled -Algorithm SHA256).Hash.ToLowerInvariant()
-$helperPublishHash = (Get-FileHash -LiteralPath (Join-Path $publish 'RasoatHopDong.UpdateHelper.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
-Write-Output "APP_HASH_MATCH=$([bool]($appInstalledHash -ceq $appPublishHash)) SHA256=$appInstalledHash"
-Write-Output "HELPER_HASH_MATCH=$([bool]($helperInstalledHash -ceq $helperPublishHash)) SHA256=$helperInstalledHash"
-if ($appInstalledHash -cne $appPublishHash -or $helperInstalledHash -cne $helperPublishHash) { throw 'Installed executable hash does not match validated publish.' }
-$postInstallEntries = @(Get-ProductRegistryKeys)
-Write-Output "POST_INSTALL_PRODUCT_ENTRIES=$($postInstallEntries.Count)"
-if ($postInstallEntries.Count -ne 1) { throw "Expected one uninstall registration after install; found $($postInstallEntries.Count)." }
-Write-Output 'INSTALL_R3_VALIDATED=PASS'
-
-Write-Output 'UNINSTALL_R3_BEGIN'
-$uninstallCode = Start-And-Wait -FilePath $uninstaller -Arguments @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$uninstallLogR3") -WorkingDirectory $installRoot
-Write-Output "UNINSTALL_R3_EXIT=$uninstallCode"
-if ($uninstallCode -ne 0) { if (Test-Path $uninstallLogR3) { Get-Content $uninstallLogR3 -Tail 120 }; throw "Uninstaller r3 returned $uninstallCode" }
-Start-Sleep -Milliseconds 1000
-$postUninstallEntries = @(Get-ProductRegistryKeys)
-Write-Output "POST_UNINSTALL_PRODUCT_ENTRIES=$($postUninstallEntries.Count)"
-Write-Output "APP_REMAINS=$([bool](Test-Path -LiteralPath $appInstalled)) HELPER_REMAINS=$([bool](Test-Path -LiteralPath $helperInstalled))"
-if ($postUninstallEntries.Count -ne 0 -or (Test-Path -LiteralPath $appInstalled) -or (Test-Path -LiteralPath $helperInstalled)) { throw 'Uninstall r3 did not fully remove product registration/files.' }
-Write-Output 'UNINSTALL_R3_VALIDATED=PASS'
-Write-Output 'STAGE3_INSTALLER_LIFECYCLE=PASS'
+Write-Output 'HISTORICAL_CANDIDATE_NAMES_END'
