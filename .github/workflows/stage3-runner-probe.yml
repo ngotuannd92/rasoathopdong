@@ -19,7 +19,7 @@ jobs:
       run:
         shell: powershell
     steps:
-      - name: Bootstrap verifier environment and run core gates
+      - name: Run static semantic Review Compare migration and export gates
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -29,17 +29,14 @@ jobs:
           $fixtureRoot = 'C:\Stage3-Work\fixtures\stage2-runtime'
           $venv = 'C:\Stage3-Work\pyenv'
           New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
-          New-Item -ItemType Directory -Path 'C:\Stage3-Work\state' -Force | Out-Null
-          if (-not (Test-Path (Join-Path $venv 'Scripts\python.exe'))) {
-            python -m venv $venv
-          }
           $py = Join-Path $venv 'Scripts\python.exe'
+          if (-not (Test-Path $py)) { throw 'Stage3 verifier environment is missing.' }
           $old = $ErrorActionPreference
           $ErrorActionPreference = 'Continue'
-          & $py -m pip install --disable-pip-version-check --quiet 'python-docx==1.1.2' *> (Join-Path $logRoot 'pip.log')
+          & $py -m pip install --disable-pip-version-check --quiet pypdf *> (Join-Path $logRoot 'pip-pypdf.log')
           $pipCode = $LASTEXITCODE
           $ErrorActionPreference = $old
-          if ($pipCode -ne 0) { Get-Content (Join-Path $logRoot 'pip.log') -Tail 40; throw 'Verifier dependency bootstrap failed.' }
+          if ($pipCode -ne 0) { Get-Content (Join-Path $logRoot 'pip-pypdf.log') -Tail 40; throw 'pypdf bootstrap failed.' }
           & $py -m pip freeze | Set-Content 'C:\Stage3-Work\state\python-tooling.txt' -Encoding UTF8
 
           if (Test-Path $fixtureRoot) { Remove-Item $fixtureRoot -Recurse -Force }
