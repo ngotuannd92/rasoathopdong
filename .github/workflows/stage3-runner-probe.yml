@@ -1,4 +1,4 @@
-name: Stage3 Full Release Regression
+name: Stage3 Historical Baseline Locate
 
 on:
   push:
@@ -12,40 +12,61 @@ permissions:
   contents: read
 
 jobs:
-  full-release:
+  locate-baseline:
     runs-on: self-hosted
-    timeout-minutes: 90
+    timeout-minutes: 20
     defaults:
       run:
         shell: powershell
     steps:
-      - name: Run complete Release test suite
+      - name: Locate immutable Stage7 historical baseline
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
-          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
-          $source = 'C:\Stage3-Work\source-current'
-          $logRoot = 'C:\Stage3-Work\logs\full-release'
-          New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
-          Push-Location $source
-          try {
-            $oldPreference = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            & dotnet build .\rasoathopdong.sln -c Release --no-restore --nologo *> (Join-Path $logRoot 'build.log')
-            $buildCode = $LASTEXITCODE
-            if ($buildCode -eq 0) {
-              & dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c Release --no-build --no-restore --nologo --logger 'trx;LogFileName=stage3-full-release.trx' --logger 'console;verbosity=normal' *> (Join-Path $logRoot 'tests.log')
-              $testCode = $LASTEXITCODE
-            } else { $testCode = 999 }
-            $ErrorActionPreference = $oldPreference
+          $expected = '81bcd973cbbc8f48e16fb3b19d3d24de31422ff23baf21bf09497a1ddd93a7d6'
+          $targetDir = 'C:\Stage3-Work\baseline'
+          $target = Join-Path $targetDir 'rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3.zip'
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 
-            Write-Output "BUILD_EXIT=$buildCode TEST_EXIT=$testCode LOCAL_HEAD=$((git rev-parse HEAD).Trim())"
-            if ($buildCode -ne 0) {
-              Get-Content (Join-Path $logRoot 'build.log') -Tail 80
-              throw 'Full Release build failed.'
+          if (Test-Path $target) {
+            $existing = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($existing -eq $expected) {
+              Write-Output "HISTORICAL_BASELINE=ready SHA256=$existing"
+              exit 0
             }
-            $testLog = Join-Path $logRoot 'tests.log'
-            Get-Content $testLog | Where-Object { $_ -match '^Failed!|^Passed!|^Total tests:|^\s+Failed:|^\s+Passed:|^\s+Skipped:|Test Run Failed|Test Run Successful|\[FAIL\]$' } | Select-Object -Last 120
-            if ($testCode -ne 0) { throw "Full Release tests failed with exit code $testCode." }
+            Remove-Item -LiteralPath $target -Force
           }
-          finally { Pop-Location }
+
+          $roots = @(
+            (Join-Path $env:USERPROFILE 'Desktop'),
+            (Join-Path $env:USERPROFILE 'Documents'),
+            (Join-Path $env:USERPROFILE 'Downloads'),
+            'C:\Stage3',
+            'C:\Stage3-Work',
+            'C:\work',
+            'C:\src',
+            'C:\actions-runner\_work'
+          ) | Where-Object { Test-Path $_ } | Select-Object -Unique
+
+          $found = $null
+          foreach ($root in $roots) {
+            $candidates = Get-ChildItem -LiteralPath $root -Filter 'rasoathopdong-v0.2.8-stage7-criteria-validation-implementation-r3*.zip' -File -Recurse -ErrorAction SilentlyContinue
+            foreach ($candidate in $candidates) {
+              $hash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($hash -eq $expected) {
+                $found = $candidate.FullName
+                break
+              }
+            }
+            if ($found) { break }
+          }
+
+          if (-not $found) {
+            Write-Output 'HISTORICAL_BASELINE=missing'
+            throw 'Required immutable Stage7 historical baseline ZIP was not found on Stage3-Win11.'
+          }
+
+          Copy-Item -LiteralPath $found -Destination $target -Force
+          $copied = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($copied -ne $expected) { throw 'Copied historical baseline hash mismatch.' }
+          Write-Output "HISTORICAL_BASELINE=ready SHA256=$copied"
