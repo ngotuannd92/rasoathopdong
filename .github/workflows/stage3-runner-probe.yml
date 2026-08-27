@@ -1,0 +1,30 @@
+name: Stage3 Runner Probe
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/stage3-runner-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          Write-Output "COMPUTERNAME=$env:COMPUTERNAME"
+          Write-Output "ARCH=$env:PROCESSOR_ARCHITECTURE"
+          Write-Output "DOTNET=$(& dotnet --version)"
+          Write-Output "PWD=$PWD"
