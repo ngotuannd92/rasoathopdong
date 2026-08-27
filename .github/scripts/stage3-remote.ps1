@@ -6,7 +6,7 @@ $expectedCatalog = '2faf9f56016e83101d6552deb15447e99e15aa00f1c6a5bf703df2b309ba
 $expectedManifest = 'dd253d8613e41a4837fd4ba45f1aa5678820be9ff850a4269d20a9c360ea1283'
 $expectedMigration = 'e06aa01e327841b6025141938dedd12348257b1ad6f62ea088645d0fa8788810'
 $expectedTarget = '47af07851637f14da1ce615864cab213e26233eae32177a52a47e3b1f22ab364'
-$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r1'
+$logRoot = 'C:\Stage3-Work\logs\stage3-test-patch-integrity-r2'
 if (Test-Path -LiteralPath $logRoot) { throw "Log root already exists: $logRoot" }
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
@@ -15,15 +15,24 @@ try {
   $head = (git rev-parse HEAD).Trim()
   $base = (git rev-parse $baselineTag).Trim()
   Write-Output "SOURCE_HEAD=$head BASELINE=$base BRANCH=$((git branch --show-current).Trim())"
+
+  $trackedPycache = @(git ls-files 'scripts/__pycache__/*')
+  $untrackedPycache = @(git ls-files --others --exclude-standard 'scripts/__pycache__/*')
+  Write-Output "TRACKED_PYCACHE=$($trackedPycache.Count) UNTRACKED_PYCACHE=$($untrackedPycache.Count)"
+  if ($trackedPycache.Count -eq 0 -and $untrackedPycache.Count -gt 0 -and (Test-Path -LiteralPath '.\scripts\__pycache__')) {
+    Remove-Item -LiteralPath '.\scripts\__pycache__' -Recurse -Force
+  }
   Write-Output 'WORKTREE_STATUS_BEGIN'
   git status --short
   Write-Output 'WORKTREE_STATUS_END'
+  $status = @(git status --porcelain)
+  if ($status.Count -ne 0) { throw 'Worktree contains uncommitted or untracked content after generated-cache cleanup.' }
   git diff --check
   if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed.' }
 
   $files = @(
-    'tests/RasoatHopDong.Tests/Stage2MigrationFixturePreparationTests.cs',
-    'tests/RasoatHopDong.Tests/Stage7InstallerContractTests.cs'
+    'tests/RasoatHopDong.Tests/Stage7InstallerContractTests.cs',
+    'tests/RasoatHopDong.Tests/Stage7PublishContractTests.cs'
   )
   Write-Output 'TEST_PATCH_DIFF_BEGIN'
   git diff --no-ext-diff --unified=80 "$baselineTag..HEAD" -- $files
@@ -37,7 +46,7 @@ try {
   Write-Output "CHANGED_FILES=$($allChanged.Count) UNEXPECTED_CHANGED_FILES=$($unexpected.Count)"
   $allChanged | ForEach-Object { Write-Output "CHANGED=$_" }
   $unexpected | ForEach-Object { Write-Output "UNEXPECTED=$_" }
-  if ($unexpected.Count -ne 0) { throw 'Unexpected tracked changes exist relative to Stage3 baseline.' }
+  if ($allChanged.Count -ne 2 -or $unexpected.Count -ne 0) { throw 'Stage3 tracked diff is not exactly the two approved test fixtures.' }
 
   git diff --quiet $baselineTag -- src data eng scripts installer tools
   $productionDiff = $LASTEXITCODE
@@ -68,7 +77,7 @@ try {
 
   function Run-Targeted([string]$config) {
     $log = Join-Path $logRoot ("targeted-" + $config.ToLowerInvariant() + '.log')
-    $filter = 'FullyQualifiedName~Stage2MigrationFixturePreparationTests|FullyQualifiedName~Stage7InstallerContractTests'
+    $filter = 'FullyQualifiedName~Stage7InstallerContractTests|FullyQualifiedName~Stage7PublishContractTests'
     $oldPref = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     dotnet test .\tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj -c $config --no-build --no-restore --nologo --filter $filter --logger 'console;verbosity=minimal' *> $log
