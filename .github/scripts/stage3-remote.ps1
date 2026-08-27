@@ -4,7 +4,7 @@ $installer = 'C:\Stage3-Work\artifacts\installer-v0.4.0-stage3-r1\rasoathopdong-
 $publish = 'C:\Stage3-Work\artifacts\publish-v0.4.0-stage3'
 $installRoot = 'C:\Stage3-Work\install-smoke\v0.4.0-r1'
 $logRoot = 'C:\Stage3-Work\logs\installer-lifecycle-r1'
-$uninstallDisplay = 'Rà soát hợp đồng'
+$appIdKeyName = '{80FFBA2A-9310-4855-8DC1-C026B40AAF2D}_is1'
 $webViewClient = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
 
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Missing installer: $installer" }
@@ -13,20 +13,16 @@ if (Test-Path -LiteralPath $installRoot) { throw "Disposable install root alread
 if (Test-Path -LiteralPath $logRoot) { throw "Disposable log root already exists: $logRoot" }
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
-function Get-InstalledProductEntries {
-  $roots = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+function Get-ProductRegistryKeys {
+  $paths = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$appIdKeyName"
   )
-  return @(
-    foreach ($root in $roots) {
-      Get-ItemProperty -Path $root -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $uninstallDisplay }
-    }
-  )
+  return @($paths | Where-Object { Test-Path -LiteralPath $_ })
 }
 
-$preExisting = @(Get-InstalledProductEntries)
+$preExisting = @(Get-ProductRegistryKeys)
 Write-Output "PREEXISTING_PRODUCT_ENTRIES=$($preExisting.Count)"
 if ($preExisting.Count -ne 0) {
   Write-Output 'INSTALLER_LIFECYCLE=NOT_RUN_PREEXISTING_PRODUCT'
@@ -39,7 +35,8 @@ $webViewPaths = @(
 )
 $webViewVersion = $null
 foreach ($path in $webViewPaths) {
-  $value = (Get-ItemProperty -LiteralPath $path -Name pv -ErrorAction SilentlyContinue).pv
+  $props = Get-ItemProperty -LiteralPath $path -Name pv -ErrorAction SilentlyContinue
+  $value = if ($null -ne $props) { $props.pv } else { $null }
   if (-not [string]::IsNullOrWhiteSpace([string]$value) -and [string]$value -ne '0.0.0.0') {
     $webViewVersion = [string]$value
     Write-Output "WEBVIEW_INSTALLED_PATH=$path VERSION=$webViewVersion"
@@ -72,7 +69,7 @@ $helperPublishHash = (Get-FileHash -LiteralPath (Join-Path $publish 'RasoatHopDo
 Write-Output "APP_HASH_MATCH=$([bool]($appInstalledHash -ceq $appPublishHash)) SHA256=$appInstalledHash"
 Write-Output "HELPER_HASH_MATCH=$([bool]($helperInstalledHash -ceq $helperPublishHash)) SHA256=$helperInstalledHash"
 if ($appInstalledHash -cne $appPublishHash -or $helperInstalledHash -cne $helperPublishHash) { throw 'Installed executable hash does not match validated publish.' }
-$postInstallEntries = @(Get-InstalledProductEntries)
+$postInstallEntries = @(Get-ProductRegistryKeys)
 Write-Output "POST_INSTALL_PRODUCT_ENTRIES=$($postInstallEntries.Count)"
 if ($postInstallEntries.Count -ne 1) { throw "Expected one uninstall registration after install; found $($postInstallEntries.Count)." }
 Write-Output 'INSTALL_VALIDATED=PASS'
@@ -83,7 +80,7 @@ $uninstallCode = $LASTEXITCODE
 Write-Output "UNINSTALL_EXIT=$uninstallCode"
 if ($uninstallCode -ne 0) { if (Test-Path $uninstallLog) { Get-Content $uninstallLog -Tail 120 }; throw "Uninstaller returned $uninstallCode" }
 Start-Sleep -Milliseconds 750
-$postUninstallEntries = @(Get-InstalledProductEntries)
+$postUninstallEntries = @(Get-ProductRegistryKeys)
 Write-Output "POST_UNINSTALL_PRODUCT_ENTRIES=$($postUninstallEntries.Count)"
 Write-Output "APP_REMAINS=$([bool](Test-Path -LiteralPath $appInstalled))"
 Write-Output "HELPER_REMAINS=$([bool](Test-Path -LiteralPath $helperInstalled))"
