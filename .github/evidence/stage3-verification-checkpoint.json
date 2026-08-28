@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "recordedAtUtc": "2026-08-28T00:15:30.8446205Z",
+  "schemaVersion": 2,
+  "recordedAtUtc": "2026-08-28T08:39:41Z",
   "runner": {
     "name": "stage3-win11",
     "machine": "NGOTUAN",
@@ -37,37 +37,46 @@
     "dataSafetyCompatibility": "277/277 PASS in Debug and Release",
     "releaseUpdateExportInstallerBackend": "977/977 PASS in Debug and Release",
     "migration010To030": "1/1 PASS in Debug and Release",
+    "migration020To030Authentic": "PASS; authentic Phase1 0.2.0/DB3/map2 fixture; Stage2PostPromotionRuntimeGateTests 11/11 Debug + 11/11 Release; 0 failed; 0 skipped",
     "stage7InstallerFixturePatch": "16/16 PASS in Debug and Release",
     "stage7PublishFixturePatch": "29/29 PASS in Debug and Release",
     "staticIntegrity": "PASS; production/data/eng/scripts/installer/tools/Web UI unchanged from baseline"
   },
   "migration020To030": {
-    "status": "BLOCKED_MISSING_AUTHENTIC_HISTORICAL_FIXTURE_SOURCE",
+    "status": "PASS",
     "requiredSourceContract": {
       "criteriaCatalogVersion": "0.2.0",
       "databaseSchemaVersion": "3",
       "criteriaCatalogMigrationMapSchemaVersion": "2"
     },
-    "knownHistoricalPrivateCommit": "2cd394d543e2e0b0bca9f7c4a1103484a6c63629",
-    "knownHistoricalPrivateCommitContract": {
+    "authenticArchivePath": "D:\\rasoathopdong-v0.4.0-phase1-final-closed-r13.zip",
+    "authenticArchiveSha256": "9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b",
+    "authenticHistoricalSourceContract": {
+      "appVersion": "0.4.0",
+      "engineVersion": "0.3.0",
       "criteriaCatalogVersion": "0.2.0",
-      "databaseSchemaVersion": "2",
-      "criteriaCatalogMigrationMapSchemaVersion": "1"
+      "databaseSchemaVersion": "3",
+      "criteriaSnapshotSchemaVersion": "4",
+      "officialCriteriaCatalogSchemaVersion": "2",
+      "officialCriteriaCatalogManifestSchemaVersion": "2",
+      "criteriaCatalogMigrationMapSchemaVersion": "2"
     },
-    "expectedArchiveName": "rasoathopdong-v0.4.0-phase1-final-closed-r13(20260818-173343).zip",
-    "expectedArchiveSha256": "9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b",
-    "archiveFoundOnStage3": false,
-    "archiveFoundInChatLibrary": false,
-    "archiveFoundInCurrentContainer": false,
-    "syntheticFixtureAllowed": false,
-    "reason": "Fixture preparation test explicitly requires an authentic 0.2.0 source with DB schema 3 and migration-map schema 2. Current 0.3.0 source and known private Stage10 source do not satisfy that contract."
+    "fixtureRoot": "C:\\Stage3-Work\\fixtures\\stage2-runtime-authentic\\catalog-0.2.0-schema3",
+    "fixtureProvenanceSha256": "6db5191bd0a62e5b6603065945053ad5fa9aa42191029542ad0dbdcd1b47fad2",
+    "fixturePreparation": "1/1 PASS Release against authentic Phase1 production source in isolated harness copy",
+    "postPromotion": "11/11 PASS Debug and 11/11 PASS Release using authentic fixture",
+    "syntheticFixtureAllowed": false
   },
   "closure": {
     "productionDefectFound": false,
     "productionPatchApplied": false,
     "userFacingUiChanged": false,
+    "earlySensitiveVerificationCompleted": true,
+    "earlySensitiveVerificationStatus": "PASS",
     "stage3FullyClosed": false,
-    "onlyOpenGate": "Migration 0.2.0 -> 0.3.0 against authentic Phase1 historical fixture"
+    "stage3OverallStatus": "IN_PROGRESS",
+    "remainingStage3Scope": "784 real-contract corpus defect discovery/holdout/regression, full Review+Compare real-data validation, compatibility continuation as needed, and final production cohort/benchmark/Windows acceptance/release gates."
   },
-  "runnerCheckpointSha256": "880443452489b45c9bf0b217a33ea3999f9f4ca17dcffda9252ef99b210eb087"
+  "runnerCheckpointSha256": "d4c640511c1864c866d6ace63210e7303d36ffdf005091bd11c768766c429e7f",
+  "earlySensitiveClosureSha256": "7597bc118976cdc97e00ec09298561d3116db4eaba670dfdb88f6c3ae63ffaa7"
 }
