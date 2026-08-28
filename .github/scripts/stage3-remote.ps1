@@ -1,19 +1,26 @@
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'SilentlyContinue'
+$expected='9eff2eebdfbb2f4fe786a6443606f9d1fb136293db89bae02199445848e2e39b'
+$target='rasoathopdong-v0.4.0-phase1-final-closed-r13(20260818-173343).zip'
 Write-Output "MACHINE=$env:COMPUTERNAME"
-Write-Output "NOW=$([DateTime]::UtcNow.ToString('o'))"
-foreach($u in @('http://127.0.0.1:8080/healthz','http://127.0.0.1:8080/readyz','http://127.0.0.1:8080/api/status','http://127.0.0.1:8080/api/system')) {
-  Write-Output "URL_BEGIN=$u"
-  try {
-    $r=Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 10
-    Write-Output "STATUS=$($r.StatusCode)"
-    Write-Output $r.Content
-  } catch {
-    if ($_.Exception.Response) {
-      Write-Output "STATUS=$([int]$_.Exception.Response.StatusCode)"
-      try { $sr=New-Object IO.StreamReader($_.Exception.Response.GetResponseStream()); Write-Output $sr.ReadToEnd(); $sr.Dispose() } catch {}
-    } else { Write-Output "ERR=$($_.Exception.Message)" }
-  }
-  Write-Output "URL_END=$u"
+Write-Output 'DRIVES_BEGIN'
+Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object { "DRIVE=$($_.DeviceID) FREE=$($_.FreeSpace) SIZE=$($_.Size)" }
+Write-Output 'DRIVES_END'
+$roots=@('C:\Users\ngotu','C:\Stage3-Work')
+foreach($d in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object -ExpandProperty DeviceID)) { if($d -ne 'C:'){ $roots += ($d+'\') } }
+$seen=@{}
+Write-Output 'CANDIDATES_BEGIN'
+foreach($r in $roots){
+  if(-not (Test-Path -LiteralPath $r)){ continue }
+  Write-Output "SEARCH_ROOT=$r"
+  Get-ChildItem -LiteralPath $r -File -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq $target -or ($_.Extension -ieq '.zip' -and $_.Name -match 'rasoathopdong.*phase1') } |
+    ForEach-Object {
+      if($seen.ContainsKey($_.FullName)){ return }
+      $seen[$_.FullName]=$true
+      $sha=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+      "FILE={0}|SIZE={1}|SHA256={2}|EXPECTED_MATCH={3}" -f $_.FullName,$_.Length,$sha,($sha -eq $expected)
+    }
 }
+Write-Output 'CANDIDATES_END'
 Write-Output 'DONE'
