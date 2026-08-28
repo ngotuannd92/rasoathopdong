@@ -1,14 +1,22 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$source='C:\Stage3-Work\source-current'
-$test=Join-Path $source 'tests\RasoatHopDong.Tests\Stage2MigrationFixturePreparationTests.cs'
-$post=Join-Path $source 'tests\RasoatHopDong.Tests\Stage2PostPromotionRuntimeGateTests.cs'
-foreach($f in @($test,$post)){
-  Write-Output "FILE_BEGIN=$f"
-  if(-not(Test-Path -LiteralPath $f)){ throw "Missing $f" }
-  Get-Content -LiteralPath $f -Raw
-  Write-Output "FILE_END=$f"
+$old='C:\Stage3-Work\historical\phase1-final-closed-r13\rasoathopdong-v0.4.0-phase1-final-closed-r13'
+$cur='C:\Stage3-Work\source-current'
+Write-Output "OLD_EXISTS=$(Test-Path -LiteralPath $old)"
+$oldProj=Join-Path $old 'tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj'
+$curProj=Join-Path $cur 'tests\RasoatHopDong.Tests\RasoatHopDong.Tests.csproj'
+Write-Output 'OLD_CSPROJ_BEGIN'; Get-Content -LiteralPath $oldProj -Raw; Write-Output 'OLD_CSPROJ_END'
+Write-Output 'CURRENT_CSPROJ_BEGIN'; Get-Content -LiteralPath $curProj -Raw; Write-Output 'CURRENT_CSPROJ_END'
+$names=@('AppDataSqliteConnectionFactory','EmbeddedOfficialCriteriaCatalogSource','LocalDataUpgradeCoordinator','CriteriaService','CriteriaWorkingSetImporter','ReviewService','CompareService','CompareHistoryService','SettingsStorage','ProductVersionInfo')
+foreach($n in $names){
+  $m=@(Get-ChildItem -LiteralPath (Join-Path $old 'src') -Recurse -File -Filter *.cs | Select-String -SimpleMatch $n | Select-Object -First 1)
+  Write-Output "OLD_SYMBOL=$n EXISTS=$($m.Count -gt 0) LOC=$($(if($m.Count){$m[0].Path+':'+$m[0].LineNumber}else{''}))"
 }
-Write-Output 'RELATED_REFS_BEGIN'
-Get-ChildItem (Join-Path $source 'tests\RasoatHopDong.Tests') -File -Filter *.cs | Select-String -Pattern 'STAGE2_PREPARE_MIGRATION_FIXTURE|catalog-0\.2\.0-schema3|STAGE2_POST_PROMOTION|Migration020To030' | ForEach-Object { "{0}:{1}:{2}" -f $_.Path,$_.LineNumber,$_.Line.Trim() }
-Write-Output 'RELATED_REFS_END'
+$assets=@(
+ 'docs\criteria-rebuild-phase2\working-set-candidates\stage2-service-candidate.json',
+ 'docs\criteria-rebuild-phase2\corpus\service-balanced.docx',
+ 'docs\criteria-rebuild-phase2\corpus\service-became-passed-before.docx',
+ 'docs\criteria-rebuild-phase2\corpus\service-became-passed-after.docx'
+)
+foreach($rel in $assets){ Write-Output "ASSET=$rel OLD=$(Test-Path -LiteralPath (Join-Path $old $rel)) CURRENT=$(Test-Path -LiteralPath (Join-Path $cur $rel))" }
+Write-Output 'DONE'
