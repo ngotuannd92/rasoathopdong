@@ -1,35 +1,25 @@
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-$source = 'C:\Stage3-Work\source-current'
-Push-Location $source
-try {
-  $head = (git rev-parse HEAD).Trim()
-  Write-Output "SOURCE_HEAD=$head"
-  Write-Output 'RELEVANT_FILES_BEGIN'
-  Get-ChildItem .\docs\criteria-rebuild-phase2,.\tests -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match 'golden|compare|corpus|ocr|scan|pdf|docx|semantic|runtime' } |
-    Sort-Object FullName |
-    ForEach-Object { "{0}|{1}" -f $_.FullName,$_.Length }
-  Write-Output 'RELEVANT_FILES_END'
-
-  Write-Output 'MANIFEST_CANDIDATES_BEGIN'
-  Get-ChildItem .\docs\criteria-rebuild-phase2 -Recurse -File -Filter *.json -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match 'golden|compare|semantic|corpus' } |
-    Sort-Object FullName |
-    ForEach-Object {
-      Write-Output "FILE=$($_.FullName) SIZE=$($_.Length)"
-      if ($_.Length -le 200000) {
-        Write-Output 'CONTENT_BEGIN'
-        Get-Content -LiteralPath $_.FullName -Raw
-        Write-Output 'CONTENT_END'
-      }
-    }
-  Write-Output 'MANIFEST_CANDIDATES_END'
-
-  Write-Output 'PRODUCTION_DOC_TEST_REFERENCES_BEGIN'
-  Get-ChildItem .\tests\RasoatHopDong.Tests -File -Filter *.cs |
-    Select-String -Pattern 'Golden|CompareCorpus|Read_ShouldRecognizeRealVietnameseScanOnWindows|ReviewContract_ShouldRunFromPdfToReviewResult|ProductionCompare_ShouldCompareTwoRealPdfFilesWithSharedBaseCriteria|WorkingSetCandidates_ReviewGolden_ShouldCoverDocxPdfTextAndOcrWithProductionPipeline' |
-    ForEach-Object { "{0}:{1}:{2}" -f $_.Path,$_.LineNumber,$_.Line.Trim() }
-  Write-Output 'PRODUCTION_DOC_TEST_REFERENCES_END'
+$ErrorActionPreference = 'Continue'
+Write-Output "MACHINE=$env:COMPUTERNAME"
+Write-Output "NOW=$([DateTime]::UtcNow.ToString('o'))"
+Write-Output 'TUNNEL_PROCESS_BEGIN'
+Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+  "PID={0} CMD={1}" -f $_.ProcessId,$_.CommandLine
 }
-finally { Pop-Location }
+Write-Output 'TUNNEL_PROCESS_END'
+$profile = Join-Path $env:APPDATA 'tunnel-client\stage3-win11.yaml'
+Write-Output "PROFILE_EXISTS=$(Test-Path -LiteralPath $profile)"
+if (Test-Path -LiteralPath $profile) {
+  Write-Output 'PROFILE_BEGIN'
+  Get-Content -LiteralPath $profile
+  Write-Output 'PROFILE_END'
+}
+Write-Output 'MCP_SERVER_FILE_BEGIN'
+$server='C:\Stage3-Work\mcp-stage3\server\index.mjs'
+Write-Output "SERVER_EXISTS=$(Test-Path -LiteralPath $server)"
+if (Test-Path -LiteralPath $server) { Write-Output "SERVER_SHA256=$((Get-FileHash -LiteralPath $server -Algorithm SHA256).Hash.ToLowerInvariant())" }
+Write-Output 'MCP_SERVER_FILE_END'
+Write-Output 'NETWORK_BEGIN'
+try { $r=Invoke-WebRequest -Uri 'https://api.openai.com/v1/models' -Method Head -UseBasicParsing -TimeoutSec 15; Write-Output "OPENAI_HTTP=$($r.StatusCode)" } catch { if ($_.Exception.Response) { Write-Output "OPENAI_HTTP=$([int]$_.Exception.Response.StatusCode)" } else { Write-Output "OPENAI_ERR=$($_.Exception.Message)" } }
+Write-Output 'NETWORK_END'
+Write-Output 'RUNNER_DONE'
